@@ -12,10 +12,10 @@ app.use(express.static(path.join(__dirname, "public")));
 
 // ── DB config (reads from environment variables set in Railway dashboard) ─
 const dbConfig = {
-  server:   process.env.DB_SERVER   || "219.92.30.133",
-  database: process.env.DB_NAME     || "Focus8010",
-  user:     process.env.DB_USER     || "sa",
-  password: process.env.DB_PASSWORD || "Qaz123#3$!",
+  server:   process.env.DB_SERVER,
+  database: process.env.DB_NAME,
+  user:     process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
   options: {
     encrypt: false,
     trustServerCertificate: true,
