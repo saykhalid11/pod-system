@@ -10,18 +10,23 @@ app.use(cors());
 // ── Serve the frontend HTML ──────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, "public")));
 
-// ── DB config (reads from environment variables set in Railway dashboard) ─
+// ── DB config ─────────────────────────────────────────────────────────────
 const dbConfig = {
   server:   process.env.DB_SERVER,
   database: process.env.DB_NAME,
   user:     process.env.DB_USER,
   password: process.env.DB_PASSWORD,
+  port:     1433,
   options: {
-    encrypt: false,
+    encrypt:                false,
     trustServerCertificate: true,
-    enableArithAbort: true,
+    enableArithAbort:       true,
   },
-  pool: { max: 10, min: 0, idleTimeoutMilliseconds: 30000 },
+  pool: {
+    max: 10,
+    min: 0,
+    idleTimeoutMs: 30000,
+  },
 };
 
 let pool;
@@ -45,7 +50,7 @@ app.get("/api/sales-orders", async (req, res) => {
     return res.status(400).json({ error: "from and to date params are required." });
 
   try {
-    const db  = await getPool();
+    const db   = await getPool();
     const req2 = db.request();
     req2.input("from", sql.Date, from);
     req2.input("to",   sql.Date, to);
@@ -115,8 +120,8 @@ app.post("/api/delivery-status", async (req, res) => {
     const req2 = db.request();
     req2.input("SONo",           sql.NVarChar(50),  salesOrderNo);
     req2.input("DeliveryStatus", sql.NVarChar(20),  deliveryStatus);
-    req2.input("Remarks",        sql.NVarChar(500), remarks  || "");
-    req2.input("UpdatedBy",      sql.NVarChar(100), updatedBy|| "POD_USER");
+    req2.input("Remarks",        sql.NVarChar(500), remarks   || "");
+    req2.input("UpdatedBy",      sql.NVarChar(100), updatedBy || "POD_USER");
     req2.input("UpdatedAt",      sql.DateTime,      new Date());
 
     await req2.query(`
