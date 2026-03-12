@@ -7,7 +7,6 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://unpkg.com/recharts@2.12.0/umd/Recharts.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #0d0f14; color: #e8ecf4; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
@@ -16,7 +15,8 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes fadeSlideIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
   @keyframes toastIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
-  @keyframes countUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+  @keyframes barGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+  @keyframes ringFill { from { stroke-dasharray: 0 999; } }
   ::-webkit-scrollbar { width:6px; height:6px; }
   ::-webkit-scrollbar-track { background:#13161e; }
   ::-webkit-scrollbar-thumb { background:#2e3547; border-radius:3px; }
@@ -25,11 +25,7 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useMemo, useEffect, useRef } = React;
-const {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, Cell, PieChart, Pie, RadialBarChart, RadialBar
-} = Recharts;
+const { useState, useMemo, useEffect } = React;
 
 const API_BASE = "";
 
@@ -50,7 +46,9 @@ const STATUS_CFG = {
 function fmt(d){ return d.toISOString().split("T")[0]; }
 const today = fmt(new Date());
 const fom   = fmt(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+const fmtRM = v => `RM ${(+v||0).toLocaleString("en-MY",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 
+// ── Badge ─────────────────────────────────────────────────────────────────
 function Badge({ status }){
   if(!status) return <span style={{fontFamily:"monospace",fontSize:11,color:C.text3,background:"rgba(255,255,255,.05)",borderRadius:20,padding:"3px 10px"}}>— Not Set</span>;
   const c = STATUS_CFG[status];
@@ -59,6 +57,7 @@ function Badge({ status }){
   </span>;
 }
 
+// ── Toasts ────────────────────────────────────────────────────────────────
 function Toasts({ list }){
   return <div style={{position:"fixed",bottom:20,right:20,zIndex:9999,display:"flex",flexDirection:"column",gap:8}}>
     {list.map(t=>(
@@ -73,97 +72,157 @@ function Toasts({ list }){
   </div>;
 }
 
-// ── KPI Ring ──────────────────────────────────────────────────────────────
+// ── KPI Ring (pure SVG) ───────────────────────────────────────────────────
 function KPIRing({ pct, color, label, sub }){
-  const r = 54, circ = 2 * Math.PI * r;
-  const dash = (pct / 100) * circ;
+  const r = 52, circ = 2 * Math.PI * r;
+  const dash = (Math.min(pct,100) / 100) * circ;
   return (
-    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
-      <div style={{position:"relative",width:140,height:140}}>
-        <svg width="140" height="140" style={{transform:"rotate(-90deg)"}}>
-          <circle cx="70" cy="70" r={r} fill="none" stroke={C.border2} strokeWidth="10"/>
-          <circle cx="70" cy="70" r={r} fill="none" stroke={color} strokeWidth="10"
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
+      <div style={{position:"relative",width:136,height:136}}>
+        <svg width="136" height="136">
+          <circle cx="68" cy="68" r={r} fill="none" stroke={C.border2} strokeWidth="10" transform="rotate(-90 68 68)"/>
+          <circle cx="68" cy="68" r={r} fill="none" stroke={color} strokeWidth="10"
             strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
-            style={{transition:"stroke-dasharray .8s ease"}}/>
+            transform="rotate(-90 68 68)"
+            style={{transition:"stroke-dasharray 1s ease",animation:"ringFill .8s ease"}}/>
         </svg>
         <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-          <div style={{fontSize:26,fontWeight:800,color,letterSpacing:-1}}>{pct.toFixed(1)}%</div>
-          <div style={{fontFamily:"monospace",fontSize:9,color:C.text3,letterSpacing:.5,textTransform:"uppercase",marginTop:2}}>{label}</div>
+          <div style={{fontSize:24,fontWeight:800,color,letterSpacing:-1,lineHeight:1}}>{pct.toFixed(1)}%</div>
+          <div style={{fontFamily:"monospace",fontSize:9,color:C.text3,letterSpacing:.5,textTransform:"uppercase",marginTop:3,textAlign:"center",padding:"0 8px"}}>{label}</div>
         </div>
       </div>
-      <div style={{fontFamily:"monospace",fontSize:11,color:C.text2,textAlign:"center"}}>{sub}</div>
+      <div style={{fontFamily:"monospace",fontSize:11,color:C.text2,textAlign:"center",maxWidth:160,lineHeight:1.5}}>{sub}</div>
     </div>
   );
 }
 
-// ── Custom Bar Tooltip ────────────────────────────────────────────────────
-function CustomTooltip({ active, payload, label, isValue }){
-  if(!active||!payload?.length) return null;
+// ── Bar Chart (pure CSS/SVG) ──────────────────────────────────────────────
+function BarChart({ bars, maxVal, isValue }){
+  const chartH = 180;
   return (
-    <div style={{background:C.surface2,border:`1px solid ${C.border2}`,borderRadius:10,padding:"12px 16px",boxShadow:"0 8px 24px rgba(0,0,0,.4)"}}>
-      <div style={{fontFamily:"monospace",fontSize:11,color:C.text3,marginBottom:8}}>{label}</div>
-      {payload.map((p,i)=>(
-        <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
-          <span style={{width:8,height:8,borderRadius:"50%",background:p.fill,display:"inline-block"}}/>
-          <span style={{fontSize:12,color:C.text2}}>{p.name}:</span>
-          <span style={{fontSize:13,fontWeight:700,color:p.fill}}>
-            {isValue ? `RM ${Number(p.value).toLocaleString("en-MY",{minimumFractionDigits:2})}` : p.value}
-          </span>
-        </div>
-      ))}
+    <div style={{display:"flex",alignItems:"flex-end",gap:8,height:chartH+40,paddingTop:10}}>
+      {bars.map((b,i)=>{
+        const pct = maxVal > 0 ? (b.value / maxVal) : 0;
+        const h   = Math.max(pct * chartH, b.value > 0 ? 4 : 0);
+        return (
+          <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+            {/* Value label */}
+            <div style={{fontFamily:"monospace",fontSize:10,color:b.color,fontWeight:700,textAlign:"center",minHeight:16}}>
+              {isValue ? (b.value>=1000?`${(b.value/1000).toFixed(1)}k`:b.value.toFixed(0)) : (b.value||"")}
+            </div>
+            {/* Bar */}
+            <div style={{width:"100%",height:chartH,display:"flex",alignItems:"flex-end"}}>
+              <div style={{
+                width:"100%", height:h, background:b.color, borderRadius:"4px 4px 0 0",
+                transformOrigin:"bottom", animation:"barGrow .6s ease",
+                boxShadow:`0 0 12px ${b.color}44`, transition:"height .6s ease",
+                minHeight: b.value>0?4:0
+              }}/>
+            </div>
+            {/* Label */}
+            <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,textAlign:"center",lineHeight:1.3,wordBreak:"break-word"}}>{b.label}</div>
+          </div>
+        );
+      })}
     </div>
   );
+}
+
+// ── Donut Chart (pure SVG) ────────────────────────────────────────────────
+function DonutChart({ slices }){
+  const total = slices.reduce((s,x)=>s+x.value,0);
+  if(!total) return <div style={{textAlign:"center",color:C.text3,fontFamily:"monospace",fontSize:12,padding:40}}>No data</div>;
+  let angle = -90;
+  const cx=90, cy=90, r=65, inner=42;
+  const paths = slices.map(s=>{
+    const pct   = s.value / total;
+    const start = angle;
+    angle      += pct * 360;
+    const end   = angle;
+    const s1    = polarToXY(cx, cy, r, start);
+    const e1    = polarToXY(cx, cy, r, end);
+    const s2    = polarToXY(cx, cy, inner, end);
+    const e2    = polarToXY(cx, cy, inner, start);
+    const large = (pct > 0.5) ? 1 : 0;
+    return { ...s, d:`M${s1.x},${s1.y} A${r},${r} 0 ${large},1 ${e1.x},${e1.y} L${s2.x},${s2.y} A${inner},${inner} 0 ${large},0 ${e2.x},${e2.y} Z`, pct };
+  });
+  return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:14}}>
+      <svg width="180" height="180">
+        {paths.map((p,i)=>(
+          <path key={i} d={p.d} fill={p.color} opacity={.9} style={{transition:"opacity .2s"}}
+            onMouseEnter={e=>e.target.style.opacity=1}
+            onMouseLeave={e=>e.target.style.opacity=.9}/>
+        ))}
+        <text x={cx} y={cy-6} textAnchor="middle" fill={C.text} fontSize="18" fontWeight="800">{total}</text>
+        <text x={cx} y={cy+12} textAnchor="middle" fill={C.text3} fontSize="10" fontFamily="monospace">ORDERS</text>
+      </svg>
+      <div style={{display:"flex",flexWrap:"wrap",gap:"6px 14px",justifyContent:"center"}}>
+        {paths.map((p,i)=>(
+          <div key={i} style={{display:"flex",alignItems:"center",gap:5,fontFamily:"monospace",fontSize:11,color:C.text2}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:p.color,display:"inline-block"}}/>
+            {p.label} ({p.value}) · {(p.pct*100).toFixed(1)}%
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function polarToXY(cx,cy,r,deg){
+  const rad = (deg * Math.PI) / 180;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
 }
 
 // ── REPORTS PAGE ──────────────────────────────────────────────────────────
 function ReportsPage({ orders, pod, dateFrom, dateTo, loaded }){
-
-  // Compute per-order subtotals and statuses
   const data = useMemo(()=>{
     if(!orders.length) return null;
-    let totalCount=0, compCount=0, pendCount=0, cancCount=0, noneCount=0;
-    let totalVal=0,   compVal=0,   pendVal=0,   cancVal=0;
+    let totalCount=0,compCount=0,pendCount=0,cancCount=0,noneCount=0;
+    let totalVal=0,compVal=0,pendVal=0,cancVal=0;
 
-    orders.forEach(o => {
-      const st  = pod[o.id]?.status || null;
-      const val = o.subTotal || o.items.reduce((s,it)=>s+(+it.gross||0),0);
-      totalCount++; totalVal += val;
-      if(st==="completed"){ compCount++; compVal+=val; }
-      else if(st==="pending"){ pendCount++; pendVal+=val; }
-      else if(st==="cancelled"){ cancCount++; cancVal+=val; }
-      else { noneCount++; }
+    orders.forEach(o=>{
+      const st  = pod[o.id]?.status||null;
+      const val = +(o.subTotal)||o.items.reduce((s,it)=>s+(+it.gross||0),0);
+      totalCount++; totalVal+=val;
+      if(st==="completed"){compCount++;compVal+=val;}
+      else if(st==="pending"){pendCount++;pendVal+=val;}
+      else if(st==="cancelled"){cancCount++;cancVal+=val;}
+      else noneCount++;
     });
 
-    const submittedCount = compCount + pendCount + cancCount;
-    const kpiCompleted   = totalCount > 0 ? (compCount / totalCount) * 100 : 0;
-    const kpiSubmitted   = totalCount > 0 ? (submittedCount / totalCount) * 100 : 0;
-    const kpiValue       = totalVal   > 0 ? (compVal / totalVal) * 100 : 0;
+    const submitted   = compCount+pendCount+cancCount;
+    const kpiComplete = totalCount>0?(compCount/totalCount)*100:0;
+    const kpiUpdated  = totalCount>0?(submitted/totalCount)*100:0;
+    const kpiValue    = totalVal>0?(compVal/totalVal)*100:0;
 
     return {
-      totalCount, compCount, pendCount, cancCount, noneCount,
-      totalVal, compVal, pendVal, cancVal,
-      kpiCompleted, kpiSubmitted, kpiValue,
-      countBar: [
-        { name:"All Orders",  value: totalCount, fill: C.accent },
-        { name:"Completed",   value: compCount,  fill: C.green  },
-        { name:"Pending",     value: pendCount,  fill: C.orange },
-        { name:"Cancelled",   value: cancCount,  fill: C.red    },
-        { name:"Not Updated", value: noneCount,  fill: C.text3  },
+      totalCount,compCount,pendCount,cancCount,noneCount,
+      totalVal,compVal,pendVal,cancVal,
+      kpiComplete,kpiUpdated,kpiValue,
+      countBars:[
+        {label:"All",     value:totalCount, color:C.accent},
+        {label:"Done",    value:compCount,  color:C.green},
+        {label:"Pending", value:pendCount,  color:C.orange},
+        {label:"Cancel",  value:cancCount,  color:C.red},
+        {label:"No Status",value:noneCount, color:C.text3},
       ],
-      valueBar: [
-        { name:"All Orders",  value: +totalVal.toFixed(2), fill: C.accent },
-        { name:"Completed",   value: +compVal.toFixed(2),  fill: C.green  },
-        { name:"Pending",     value: +pendVal.toFixed(2),  fill: C.orange },
-        { name:"Cancelled",   value: +cancVal.toFixed(2),  fill: C.red    },
+      valueBars:[
+        {label:"All",    value:+totalVal.toFixed(2), color:C.accent},
+        {label:"Done",   value:+compVal.toFixed(2),  color:C.green},
+        {label:"Pending",value:+pendVal.toFixed(2),  color:C.orange},
+        {label:"Cancel", value:+cancVal.toFixed(2),  color:C.red},
       ],
-      pie: [
-        { name:"Completed",   value: compCount,  fill: C.green  },
-        { name:"Pending",     value: pendCount,  fill: C.orange },
-        { name:"Cancelled",   value: cancCount,  fill: C.red    },
-        { name:"Not Updated", value: noneCount,  fill: C.text3  },
+      donut:[
+        {label:"Completed", value:compCount, color:C.green},
+        {label:"Pending",   value:pendCount, color:C.orange},
+        {label:"Cancelled", value:cancCount, color:C.red},
+        {label:"Not Set",   value:noneCount, color:C.text3},
       ].filter(x=>x.value>0),
     };
-  }, [orders, pod]);
+  },[orders,pod]);
+
+  const card = { background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"20px 24px" };
 
   if(!loaded) return (
     <div style={{padding:80,textAlign:"center"}}>
@@ -171,179 +230,121 @@ function ReportsPage({ orders, pod, dateFrom, dateTo, loaded }){
       <div style={{fontFamily:"monospace",fontSize:13,color:C.text3,marginTop:12}}>Load orders first to see reports.</div>
     </div>
   );
-
-  if(!data || !orders.length) return (
+  if(!data||!orders.length) return (
     <div style={{padding:80,textAlign:"center"}}>
       <div style={{fontSize:40,opacity:.2}}>🔍</div>
-      <div style={{fontFamily:"monospace",fontSize:13,color:C.text3,marginTop:12}}>No orders in selected date range.</div>
+      <div style={{fontFamily:"monospace",fontSize:13,color:C.text3,marginTop:12}}>No orders in selected range.</div>
     </div>
   );
 
-  const fmtVal = v => `RM ${v.toLocaleString("en-MY",{minimumFractionDigits:2})}`;
-  const cardStyle = { background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"20px 24px" };
+  const maxCount = Math.max(...data.countBars.map(b=>b.value),1);
+  const maxValue = Math.max(...data.valueBars.map(b=>b.value),1);
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:20}}>
+    <div style={{display:"flex",flexDirection:"column",gap:18}}>
 
-      {/* Date range label */}
+      {/* Period */}
       <div style={{fontFamily:"monospace",fontSize:11,color:C.text3}}>
-        Report period: <span style={{color:C.text2}}>{dateFrom} → {dateTo}</span>
-        &nbsp;·&nbsp; <span style={{color:C.accent}}>{data.totalCount} orders</span>
-        &nbsp;·&nbsp; Total value <span style={{color:C.accent}}>{fmtVal(data.totalVal)}</span>
+        Period: <span style={{color:C.text2}}>{dateFrom} → {dateTo}</span>
+        &nbsp;·&nbsp;<span style={{color:C.accent}}>{data.totalCount} orders</span>
+        &nbsp;·&nbsp;Total <span style={{color:C.accent}}>{fmtRM(data.totalVal)}</span>
       </div>
 
-      {/* ── KPI Row ── */}
-      <div style={{...cardStyle}}>
-        <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:20}}>
-          📈 Key Performance Indicators
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:24}}>
-          <KPIRing pct={data.kpiCompleted} color={C.green}  label="Completion Rate"
-            sub={`${data.compCount} of ${data.totalCount} orders completed`}/>
-          <KPIRing pct={data.kpiSubmitted} color={C.accent} label="Update Rate"
-            sub={`${data.compCount+data.pendCount+data.cancCount} of ${data.totalCount} orders updated`}/>
-          <KPIRing pct={data.kpiValue}     color={C.accent2} label="Value Delivered"
-            sub={`${fmtVal(data.compVal)} of ${fmtVal(data.totalVal)}`}/>
+      {/* ── KPI Rings ── */}
+      <div style={{...card}}>
+        <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:22}}>📈 Key Performance Indicators</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:20}}>
+          <KPIRing pct={data.kpiComplete} color={C.green}   label="Completion Rate"  sub={`${data.compCount} of ${data.totalCount} orders completed`}/>
+          <KPIRing pct={data.kpiUpdated}  color={C.accent}  label="Update Rate"      sub={`${data.compCount+data.pendCount+data.cancCount} of ${data.totalCount} orders updated`}/>
+          <KPIRing pct={data.kpiValue}    color={C.accent2} label="Value Delivered"  sub={`${fmtRM(data.compVal)} of ${fmtRM(data.totalVal)}`}/>
         </div>
       </div>
 
       {/* ── Summary Cards ── */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
         {[
-          { lbl:"Total Orders",   cnt:data.totalCount, val:data.totalVal, color:C.accent,  icon:"📋" },
-          { lbl:"Completed",      cnt:data.compCount,  val:data.compVal,  color:C.green,   icon:"✅" },
-          { lbl:"Pending",        cnt:data.pendCount,  val:data.pendVal,  color:C.orange,  icon:"⏳" },
-          { lbl:"Cancelled",      cnt:data.cancCount,  val:data.cancVal,  color:C.red,     icon:"❌" },
+          {lbl:"Total Orders", cnt:data.totalCount, val:data.totalVal, color:C.accent, icon:"📋"},
+          {lbl:"Completed",    cnt:data.compCount,  val:data.compVal,  color:C.green,  icon:"✅"},
+          {lbl:"Pending",      cnt:data.pendCount,  val:data.pendVal,  color:C.orange, icon:"⏳"},
+          {lbl:"Cancelled",    cnt:data.cancCount,  val:data.cancVal,  color:C.red,    icon:"❌"},
         ].map(c=>(
-          <div key={c.lbl} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:13,padding:"16px 18px",animation:"countUp .4s ease"}}>
+          <div key={c.lbl} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:13,padding:"16px 18px"}}>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
-              <div style={{width:36,height:36,borderRadius:9,background:`${c.color}18`,display:"grid",placeItems:"center",fontSize:16}}>{c.icon}</div>
+              <div style={{width:34,height:34,borderRadius:8,background:`${c.color}18`,display:"grid",placeItems:"center",fontSize:15}}>{c.icon}</div>
               <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,textTransform:"uppercase",letterSpacing:.8}}>{c.lbl}</div>
             </div>
             <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,color:c.color,lineHeight:1}}>{c.cnt}</div>
-            <div style={{fontFamily:"monospace",fontSize:11,color:C.text2,marginTop:6}}>{fmtVal(c.val)}</div>
+            <div style={{fontFamily:"monospace",fontSize:11,color:C.text2,marginTop:6}}>{fmtRM(c.val)}</div>
           </div>
         ))}
       </div>
 
-      {/* ── Charts Row ── */}
+      {/* ── Bar Charts ── */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-
-        {/* Count Bar Chart */}
-        <div style={cardStyle}>
-          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:16}}>
-            📦 Order Count Breakdown
-          </div>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={data.countBar} barSize={36}>
-              <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false}/>
-              <XAxis dataKey="name" tick={{fill:C.text3,fontSize:11,fontFamily:"monospace"}} axisLine={false} tickLine={false}/>
-              <YAxis tick={{fill:C.text3,fontSize:11,fontFamily:"monospace"}} axisLine={false} tickLine={false} allowDecimals={false}/>
-              <Tooltip content={<CustomTooltip isValue={false}/>} cursor={{fill:"rgba(255,255,255,.03)"}}/>
-              <Bar dataKey="value" name="Orders" radius={[6,6,0,0]}>
-                {data.countBar.map((e,i)=><Cell key={i} fill={e.fill}/>)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+        <div style={card}>
+          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>📦 Order Count Breakdown</div>
+          <BarChart bars={data.countBars} maxVal={maxCount} isValue={false}/>
         </div>
-
-        {/* Value Bar Chart */}
-        <div style={cardStyle}>
-          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:16}}>
-            💰 Order Value Breakdown (RM)
-          </div>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={data.valueBar} barSize={36}>
-              <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false}/>
-              <XAxis dataKey="name" tick={{fill:C.text3,fontSize:11,fontFamily:"monospace"}} axisLine={false} tickLine={false}/>
-              <YAxis tick={{fill:C.text3,fontSize:11,fontFamily:"monospace"}} axisLine={false} tickLine={false}
-                tickFormatter={v=>`RM ${(v/1000).toFixed(0)}k`}/>
-              <Tooltip content={<CustomTooltip isValue={true}/>} cursor={{fill:"rgba(255,255,255,.03)"}}/>
-              <Bar dataKey="value" name="Value" radius={[6,6,0,0]}>
-                {data.valueBar.map((e,i)=><Cell key={i} fill={e.fill}/>)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+        <div style={card}>
+          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>💰 Order Value Breakdown (RM)</div>
+          <BarChart bars={data.valueBars} maxVal={maxValue} isValue={true}/>
         </div>
       </div>
 
-      {/* ── Pie + KPI Table Row ── */}
-      <div style={{display:"grid",gridTemplateColumns:"340px 1fr",gap:16}}>
-
-        {/* Pie Chart */}
-        <div style={cardStyle}>
-          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:16}}>
-            🥧 Status Distribution
-          </div>
-          <ResponsiveContainer width="100%" height={200}>
-            <PieChart>
-              <Pie data={data.pie} cx="50%" cy="50%" innerRadius={55} outerRadius={85}
-                dataKey="value" paddingAngle={3}>
-                {data.pie.map((e,i)=><Cell key={i} fill={e.fill}/>)}
-              </Pie>
-              <Tooltip content={<CustomTooltip isValue={false}/>}/>
-            </PieChart>
-          </ResponsiveContainer>
-          <div style={{display:"flex",flexWrap:"wrap",gap:"8px 14px",marginTop:8,justifyContent:"center"}}>
-            {data.pie.map((e,i)=>(
-              <div key={i} style={{display:"flex",alignItems:"center",gap:5,fontFamily:"monospace",fontSize:11,color:C.text2}}>
-                <span style={{width:8,height:8,borderRadius:"50%",background:e.fill,display:"inline-block"}}/>
-                {e.name} ({e.value})
-              </div>
-            ))}
-          </div>
+      {/* ── Donut + Table ── */}
+      <div style={{display:"grid",gridTemplateColumns:"320px 1fr",gap:16}}>
+        <div style={card}>
+          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:16}}>🥧 Status Distribution</div>
+          <DonutChart slices={data.donut}/>
         </div>
 
-        {/* KPI Detail Table */}
-        <div style={cardStyle}>
-          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:16}}>
-            🎯 Performance Summary Table
-          </div>
+        <div style={card}>
+          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:16}}>🎯 Performance Summary</div>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead>
               <tr style={{background:C.surface2}}>
-                {["Metric","Count","Value (RM)","% of Total Count","% of Total Value"].map(h=>(
+                {["Status","Count","Value (RM)","% Count","% Value"].map(h=>(
                   <th key={h} style={{padding:"8px 12px",textAlign:"left",fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:.8,textTransform:"uppercase",borderBottom:`1px solid ${C.border}`,fontWeight:500}}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {[
-                { lbl:"✅ Completed", cnt:data.compCount, val:data.compVal, color:C.green  },
-                { lbl:"⏳ Pending",   cnt:data.pendCount, val:data.pendVal, color:C.orange },
-                { lbl:"❌ Cancelled", cnt:data.cancCount, val:data.cancVal, color:C.red    },
-                { lbl:"— Not Updated",cnt:data.noneCount,val:0,            color:C.text3  },
+                {lbl:"✅ Completed",  cnt:data.compCount, val:data.compVal, color:C.green},
+                {lbl:"⏳ Pending",    cnt:data.pendCount, val:data.pendVal, color:C.orange},
+                {lbl:"❌ Cancelled",  cnt:data.cancCount, val:data.cancVal, color:C.red},
+                {lbl:"— Not Updated",cnt:data.noneCount, val:0,            color:C.text3},
               ].map((r,i)=>{
-                const cntPct = data.totalCount>0?(r.cnt/data.totalCount*100).toFixed(1):0;
-                const valPct = data.totalVal>0?(r.val/data.totalVal*100).toFixed(1):0;
+                const cp = data.totalCount>0?(r.cnt/data.totalCount*100).toFixed(1):0;
+                const vp = data.totalVal>0?(r.val/data.totalVal*100).toFixed(1):0;
                 return (
                   <tr key={i} style={{borderBottom:`1px solid rgba(255,255,255,.04)`}}>
                     <td style={{padding:"10px 12px",fontWeight:600,color:r.color}}>{r.lbl}</td>
-                    <td style={{padding:"10px 12px",fontFamily:"monospace",fontSize:13,fontWeight:700,color:r.color}}>{r.cnt}</td>
-                    <td style={{padding:"10px 12px",fontFamily:"monospace",fontSize:12}}>{fmtVal(r.val)}</td>
-                    <td style={{padding:"10px 12px"}}>
+                    <td style={{padding:"10px 12px",fontFamily:"monospace",fontWeight:700,color:r.color,fontSize:15}}>{r.cnt}</td>
+                    <td style={{padding:"10px 12px",fontFamily:"monospace",fontSize:12}}>{fmtRM(r.val)}</td>
+                    <td style={{padding:"10px 12px",minWidth:120}}>
                       <div style={{display:"flex",alignItems:"center",gap:8}}>
                         <div style={{flex:1,height:6,background:C.border,borderRadius:3,overflow:"hidden"}}>
-                          <div style={{width:`${cntPct}%`,height:"100%",background:r.color,borderRadius:3,transition:"width .6s ease"}}/>
+                          <div style={{width:`${cp}%`,height:"100%",background:r.color,borderRadius:3,transition:"width .8s ease"}}/>
                         </div>
-                        <span style={{fontFamily:"monospace",fontSize:11,color:r.color,minWidth:36}}>{cntPct}%</span>
+                        <span style={{fontFamily:"monospace",fontSize:11,color:r.color,minWidth:38}}>{cp}%</span>
                       </div>
                     </td>
-                    <td style={{padding:"10px 12px"}}>
+                    <td style={{padding:"10px 12px",minWidth:120}}>
                       <div style={{display:"flex",alignItems:"center",gap:8}}>
                         <div style={{flex:1,height:6,background:C.border,borderRadius:3,overflow:"hidden"}}>
-                          <div style={{width:`${valPct}%`,height:"100%",background:r.color,borderRadius:3,transition:"width .6s ease"}}/>
+                          <div style={{width:`${vp}%`,height:"100%",background:r.color,borderRadius:3,transition:"width .8s ease"}}/>
                         </div>
-                        <span style={{fontFamily:"monospace",fontSize:11,color:r.color,minWidth:36}}>{valPct}%</span>
+                        <span style={{fontFamily:"monospace",fontSize:11,color:r.color,minWidth:38}}>{vp}%</span>
                       </div>
                     </td>
                   </tr>
                 );
               })}
-              <tr style={{background:C.surface2}}>
+              <tr style={{background:C.surface2,borderTop:`1px solid ${C.border2}`}}>
                 <td style={{padding:"10px 12px",fontWeight:700,color:C.accent}}>📋 TOTAL</td>
-                <td style={{padding:"10px 12px",fontFamily:"monospace",fontWeight:800,color:C.accent}}>{data.totalCount}</td>
-                <td style={{padding:"10px 12px",fontFamily:"monospace",fontWeight:700,color:C.accent}}>{fmtVal(data.totalVal)}</td>
+                <td style={{padding:"10px 12px",fontFamily:"monospace",fontWeight:800,color:C.accent,fontSize:15}}>{data.totalCount}</td>
+                <td style={{padding:"10px 12px",fontFamily:"monospace",fontWeight:700,color:C.accent}}>{fmtRM(data.totalVal)}</td>
                 <td style={{padding:"10px 12px",fontFamily:"monospace",color:C.text3}}>100%</td>
                 <td style={{padding:"10px 12px",fontFamily:"monospace",color:C.text3}}>100%</td>
               </tr>
@@ -360,15 +361,13 @@ function ReportsPage({ orders, pod, dateFrom, dateTo, loaded }){
 function OrderDetail({ order, st, onStatus, onComment, onSubmit }){
   const { status, comment, submitted, submitting } = st;
   const itemsGross = order.items.reduce((s,it)=>s+(+it.gross||0),0);
-  const sst        = order.sstAmount || 0;
-  const subTotal   = order.subTotal  || (itemsGross + sst);
+  const sst        = order.sstAmount||0;
+  const subTotal   = order.subTotal||(itemsGross+sst);
 
   return (
     <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:20,padding:"20px 20px 20px 58px",background:"rgba(0,0,0,.22)",borderTop:`1px solid ${C.border}`,animation:"fadeSlideIn .2s ease"}}>
       <div>
-        <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>
-          Line Items — {order.customer}
-        </div>
+        <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Line Items — {order.customer}</div>
         <div style={{overflowX:"auto"}}>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,minWidth:480}}>
             <thead>
@@ -411,7 +410,7 @@ function OrderDetail({ order, st, onStatus, onComment, onSubmit }){
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:7}}>
           {Object.entries(STATUS_CFG).map(([key,cfg])=>{
-            const sel = status===key;
+            const sel=status===key;
             return <div key={key} onClick={()=>!submitted&&onStatus(key)}
               style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:9,border:`1px solid ${sel?cfg.color:C.border}`,background:sel?cfg.bg:"transparent",cursor:submitted?"not-allowed":"pointer",opacity:submitted?.65:1,transition:"all .15s",userSelect:"none"}}>
               <div style={{width:15,height:15,borderRadius:"50%",border:`2px solid ${sel?cfg.color:C.border2}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -460,65 +459,53 @@ function App(){
   const [pod,        setPod]        = useState({});
   const [toasts,     setToasts]     = useState([]);
 
-  function addToast(type, title, msg){
-    const id = Date.now();
+  function addToast(type,title,msg){
+    const id=Date.now();
     setToasts(t=>[...t,{id,type,title,msg}]);
-    setTimeout(()=>setToasts(t=>t.filter(x=>x.id!==id)), 3500);
+    setTimeout(()=>setToasts(t=>t.filter(x=>x.id!==id)),3500);
   }
 
   async function loadOrders(){
-    if(!dateFrom||!dateTo){ addToast("error","⚠️ Required","Select both dates."); return; }
-    if(dateFrom>dateTo){ addToast("error","⚠️ Invalid","From must be before To."); return; }
-    setLoading(true); setLoaded(false); setError(""); setExpanded({}); setOrders([]);
+    if(!dateFrom||!dateTo){addToast("error","⚠️ Required","Select both dates.");return;}
+    if(dateFrom>dateTo){addToast("error","⚠️ Invalid","From must be before To.");return;}
+    setLoading(true);setLoaded(false);setError("");setExpanded({});setOrders([]);
     try{
-      const url = `${API_BASE}/api/sales-orders?from=${dateFrom}&to=${dateTo}&customer=${encodeURIComponent(custFilter)}`;
-      const res = await fetch(url);
-      if(!res.ok){ const e=await res.json(); throw new Error(e.error||`HTTP ${res.status}`); }
-      const data = await res.json();
+      const res=await fetch(`${API_BASE}/api/sales-orders?from=${dateFrom}&to=${dateTo}&customer=${encodeURIComponent(custFilter)}`);
+      if(!res.ok){const e=await res.json();throw new Error(e.error||`HTTP ${res.status}`);}
+      const data=await res.json();
       setOrders(data);
       const s={};
-      data.forEach(o=>{ s[o.id]=pod[o.id]||{status:null,comment:"",submitted:false,submitting:false}; });
-      setPod(s); setLoaded(true);
+      data.forEach(o=>{s[o.id]=pod[o.id]||{status:null,comment:"",submitted:false,submitting:false};});
+      setPod(s);setLoaded(true);
       addToast("success","✅ Orders Loaded",`${data.length} order(s) retrieved.`);
-    }catch(err){
-      setError(err.message);
-      addToast("error","❌ Load Failed", err.message);
-    }finally{ setLoading(false); }
+    }catch(err){setError(err.message);addToast("error","❌ Load Failed",err.message);}
+    finally{setLoading(false);}
   }
 
   async function submitPOD(id){
     const st=pod[id];
-    if(!st?.status||st.submitted) return;
+    if(!st?.status||st.submitted)return;
     setPod(p=>({...p,[id]:{...p[id],submitting:true}}));
     try{
-      const res = await fetch(`${API_BASE}/api/delivery-status`,{
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ salesOrderNo:id, deliveryStatus:st.status, remarks:st.comment||"", updatedBy:"POD_USER" })
-      });
-      if(!res.ok){ const e=await res.json(); throw new Error(e.error||`HTTP ${res.status}`); }
+      const res=await fetch(`${API_BASE}/api/delivery-status`,{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({salesOrderNo:id,deliveryStatus:st.status,remarks:st.comment||"",updatedBy:"POD_USER"})});
+      if(!res.ok){const e=await res.json();throw new Error(e.error||`HTTP ${res.status}`);}
       setPod(p=>({...p,[id]:{...p[id],submitting:false,submitted:true}}));
       addToast("success","✅ POD Saved",`${id} marked as ${st.status}.`);
     }catch(err){
       setPod(p=>({...p,[id]:{...p[id],submitting:false}}));
-      addToast("error","❌ Failed", err.message);
+      addToast("error","❌ Failed",err.message);
     }
   }
 
-  const stats = useMemo(()=>{
+  const stats=useMemo(()=>{
     const s={total:orders.length,completed:0,pending:0,cancelled:0};
-    orders.forEach(o=>{ const v=pod[o.id]?.status; if(v) s[v]++; });
+    orders.forEach(o=>{const v=pod[o.id]?.status;if(v)s[v]++;});
     return s;
   },[orders,pod]);
 
-  const inputStyle = { background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, fontFamily:"monospace", fontSize:13, padding:"8px 11px", borderRadius:8, outline:"none" };
-
-  const tabStyle = (active) => ({
-    padding:"9px 20px", borderRadius:9, fontWeight:700, fontSize:13, cursor:"pointer", border:"none",
-    background: active ? "linear-gradient(135deg,#4f8ef7,#7c5cfc)" : C.surface2,
-    color: active ? "#fff" : C.text2,
-    boxShadow: active ? "0 4px 14px rgba(79,142,247,.25)" : "none",
-    transition:"all .2s"
-  });
+  const inp={background:C.surface2,border:`1px solid ${C.border2}`,color:C.text,fontFamily:"monospace",fontSize:13,padding:"8px 11px",borderRadius:8,outline:"none"};
+  const tab=(a)=>({padding:"9px 20px",borderRadius:9,fontWeight:700,fontSize:13,cursor:"pointer",border:"none",background:a?"linear-gradient(135deg,#4f8ef7,#7c5cfc)":C.surface2,color:a?"#fff":C.text2,boxShadow:a?"0 4px 14px rgba(79,142,247,.25)":"none",transition:"all .2s"});
 
   return (
     <div style={{position:"relative",maxWidth:1280,margin:"0 auto",padding:"0 20px 60px"}}>
@@ -538,19 +525,18 @@ function App(){
         </div>
       </div>
 
-      {/* Filter Bar */}
+      {/* Filter */}
       <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:"16px 20px",display:"flex",alignItems:"flex-end",gap:14,flexWrap:"wrap",marginBottom:20}}>
         {[["From Date",dateFrom,setDateFrom],["To Date",dateTo,setDateTo]].map(([lbl,val,set])=>(
           <div key={lbl} style={{display:"flex",flexDirection:"column",gap:5}}>
             <span style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase"}}>{lbl}</span>
-            <input type="date" value={val} onChange={e=>set(e.target.value)} style={{...inputStyle,minWidth:145,cursor:"pointer"}}/>
+            <input type="date" value={val} onChange={e=>set(e.target.value)} style={{...inp,minWidth:145,cursor:"pointer"}}/>
           </div>
         ))}
         <div style={{display:"flex",flexDirection:"column",gap:5}}>
           <span style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase"}}>Customer</span>
           <input type="text" value={custFilter} onChange={e=>setCustFilter(e.target.value)}
-            placeholder="Filter by customer…" onKeyDown={e=>e.key==="Enter"&&loadOrders()}
-            style={{...inputStyle,minWidth:200}}/>
+            placeholder="Filter by customer…" onKeyDown={e=>e.key==="Enter"&&loadOrders()} style={{...inp,minWidth:200}}/>
         </div>
         <div style={{display:"flex",gap:9,marginLeft:"auto"}}>
           <button onClick={()=>{setDateFrom(fom);setDateTo(today);setCustFilter("");}}
@@ -577,18 +563,18 @@ function App(){
 
       {/* Tabs */}
       <div style={{display:"flex",gap:8,marginBottom:20}}>
-        <button style={tabStyle(activeTab==="orders")} onClick={()=>setActiveTab("orders")}>📋 Sales Orders</button>
-        <button style={tabStyle(activeTab==="reports")} onClick={()=>setActiveTab("reports")}>📊 Reports & KPI</button>
+        <button style={tab(activeTab==="orders")}  onClick={()=>setActiveTab("orders")}>📋 Sales Orders</button>
+        <button style={tab(activeTab==="reports")} onClick={()=>setActiveTab("reports")}>📊 Reports & KPI</button>
       </div>
 
-      {/* ── ORDERS TAB ── */}
-      {activeTab==="orders" && (
+      {/* Orders Tab */}
+      {activeTab==="orders"&&(
         <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 18px",borderBottom:`1px solid ${C.border}`}}>
             <div style={{fontFamily:"monospace",fontSize:12,color:C.text2}}>
-              {error ? <span style={{color:C.red}}>⚠️ {error}</span>
-                : loaded ? <span>Found <strong style={{color:C.accent}}>{orders.length}</strong> order(s) · {dateFrom} → {dateTo}</span>
-                : "Select a date range and click ⚡ Load Orders"}
+              {error?<span style={{color:C.red}}>⚠️ {error}</span>
+                :loaded?<span>Found <strong style={{color:C.accent}}>{orders.length}</strong> order(s) · {dateFrom} → {dateTo}</span>
+                :"Select a date range and click ⚡ Load Orders"}
             </div>
             <div style={{fontFamily:"monospace",fontSize:10,color:C.text3}}>↕ Click any row to expand</div>
           </div>
@@ -597,31 +583,31 @@ function App(){
               <div key={i} style={{padding:"0 8px",fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:.9,textTransform:"uppercase",textAlign:i>=4?"center":"left"}}>{h}</div>
             ))}
           </div>
-          {loading ? (
+          {loading?(
             <div style={{padding:56,textAlign:"center",fontFamily:"monospace",fontSize:13,color:C.text3}}>
               <span style={{display:"inline-block",width:18,height:18,border:`2px solid ${C.border}`,borderTopColor:C.accent,borderRadius:"50%",animation:"spin .7s linear infinite",marginRight:10,verticalAlign:"middle"}}/>
               Querying SQL Server…
             </div>
-          ) : !loaded&&!error ? (
+          ):!loaded&&!error?(
             <div style={{padding:56,textAlign:"center"}}>
               <div style={{fontSize:34,opacity:.2}}>🗂️</div>
               <div style={{fontFamily:"monospace",fontSize:13,color:C.text3,marginTop:10}}>No orders loaded yet.</div>
             </div>
-          ) : error ? (
+          ):error?(
             <div style={{padding:40,textAlign:"center"}}>
               <div style={{fontSize:34,opacity:.3}}>⚠️</div>
               <div style={{fontFamily:"monospace",fontSize:13,color:C.red,marginTop:10}}>{error}</div>
             </div>
-          ) : orders.length===0 ? (
+          ):orders.length===0?(
             <div style={{padding:56,textAlign:"center"}}>
               <div style={{fontSize:34,opacity:.2}}>🔍</div>
               <div style={{fontFamily:"monospace",fontSize:13,color:C.text3,marginTop:10}}>No orders found.</div>
             </div>
-          ) : orders.map(o=>{
-            const gross = o.items.reduce((s,it)=>s+(+it.gross||0),0);
-            const open  = !!expanded[o.id];
-            const st    = pod[o.id]||{};
-            return (
+          ):orders.map(o=>{
+            const gross=o.items.reduce((s,it)=>s+(+it.gross||0),0);
+            const open=!!expanded[o.id];
+            const st=pod[o.id]||{};
+            return(
               <div key={o.id} style={{borderBottom:`1px solid ${C.border}`}}>
                 <div onClick={()=>setExpanded(e=>({...e,[o.id]:!e[o.id]}))}
                   style={{display:"grid",gridTemplateColumns:"38px 150px 100px 1fr 120px 70px 180px",padding:"0 18px",minHeight:52,alignItems:"center",cursor:"pointer",background:open?"rgba(79,142,247,.05)":"transparent",transition:"background .15s"}}>
@@ -647,8 +633,8 @@ function App(){
         </div>
       )}
 
-      {/* ── REPORTS TAB ── */}
-      {activeTab==="reports" && (
+      {/* Reports Tab */}
+      {activeTab==="reports"&&(
         <ReportsPage orders={orders} pod={pod} dateFrom={dateFrom} dateTo={dateTo} loaded={loaded}/>
       )}
 
