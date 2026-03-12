@@ -22,11 +22,6 @@ const dbConfig = {
     trustServerCertificate: true,
     enableArithAbort:       true,
   },
-  pool: {
-    max: 10,
-    min: 0,
-    idleTimeoutMs: 30000,
-  },
 };
 
 let pool;
