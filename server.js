@@ -578,6 +578,145 @@ app.get("/api/kpi/invoices", authMiddleware, async (req, res) => {
   }
 });
 
+
+// ══════════════════════════════════════════════════════════════════════════
+// REPORT ENDPOINT — full data for print/export
+// GET /api/report?from=&to=
+// ══════════════════════════════════════════════════════════════════════════
+app.get("/api/report", authMiddleware, async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) return res.status(400).json({ error: "from and to required." });
+
+  try {
+    const db = await getPool();
+
+    // ── SO KPI ──────────────────────────────────────────────────────────
+    const soKpi = await db.request()
+      .input("from", sql.Date, from).input("to", sql.Date, to)
+      .query(`
+        WITH SO_Summary AS (
+          SELECT s.SONo, SUM(s.SubTotal) AS SubTotalSum, MAX(hd.DOStatus) AS DOStatus
+          FROM tbl_SO_Cache s
+          LEFT JOIN tCore_Header_0 h ON h.sVoucherNo=s.SONo AND h.iVoucherType=5634
+          LEFT JOIN tCore_HeaderData5634_0 hd ON hd.iHeaderId=h.iHeaderId
+          WHERE s.DocDate BETWEEN @from AND @to
+          GROUP BY s.SONo
+        )
+        SELECT
+          COUNT(*)                                                AS TotalCount,
+          SUM(SubTotalSum)                                        AS TotalValue,
+          SUM(CASE WHEN DOStatus=1 THEN 1 ELSE 0 END)            AS CompletedCount,
+          SUM(CASE WHEN DOStatus=2 THEN 1 ELSE 0 END)            AS CancelledCount,
+          SUM(CASE WHEN DOStatus=1 THEN SubTotalSum ELSE 0 END)  AS CompletedValue,
+          SUM(CASE WHEN DOStatus=2 THEN SubTotalSum ELSE 0 END)  AS CancelledValue
+        FROM SO_Summary
+      `);
+
+    const sk = soKpi.recordset[0];
+    const soTotal = sk.TotalCount||0, soComp = sk.CompletedCount||0, soCanc = sk.CancelledCount||0;
+    const soTotalVal = parseFloat(sk.TotalValue)||0;
+    const soCompVal  = parseFloat(sk.CompletedValue)||0;
+    const soCancVal  = parseFloat(sk.CancelledValue)||0;
+    const soKpiData  = {
+      totalCount: soTotal, completedCount: soComp,
+      cancelledCount: soCanc, pendingCount: soTotal-soComp-soCanc,
+      totalValue: soTotalVal, completedValue: soCompVal,
+      cancelledValue: soCancVal, pendingValue: soTotalVal-soCompVal-soCancVal,
+      completionRate:   soTotal>0?(soComp/soTotal*100).toFixed(1):"0.0",
+      cancellationRate: soTotal>0?(soCanc/soTotal*100).toFixed(1):"0.0",
+    };
+
+    // ── Invoice KPI ─────────────────────────────────────────────────────
+    const ivKpi = await db.request()
+      .input("from", sql.Date, from).input("to", sql.Date, to)
+      .query(`
+        WITH IV_Summary AS (
+          SELECT i.InvNo, SUM(i.Sub_Total) AS SubTotalSum, MAX(hd.InvoiceStatus) AS InvoiceStatus
+          FROM vw_TodaysSalesInvoiceDetails i
+          LEFT JOIN tCore_Header_0 h ON h.sVoucherNo=i.InvNo AND h.iVoucherType=3332
+          LEFT JOIN tCore_HeaderData3332_0 hd ON hd.iHeaderId=h.iHeaderId
+          WHERE i.InvDate BETWEEN @from AND @to
+          GROUP BY i.InvNo
+        )
+        SELECT
+          COUNT(*)                                                   AS TotalCount,
+          SUM(SubTotalSum)                                           AS TotalValue,
+          SUM(CASE WHEN InvoiceStatus=2 THEN 1 ELSE 0 END)          AS CancelledCount,
+          SUM(CASE WHEN InvoiceStatus=2 THEN SubTotalSum ELSE 0 END) AS CancelledValue
+        FROM IV_Summary
+      `);
+
+    const ik = ivKpi.recordset[0];
+    const ivTotal = ik.TotalCount||0, ivCanc = ik.CancelledCount||0;
+    const ivTotalVal = parseFloat(ik.TotalValue)||0;
+    const ivCancVal  = parseFloat(ik.CancelledValue)||0;
+    const ivKpiData  = {
+      totalCount: ivTotal, activeCount: ivTotal-ivCanc, cancelledCount: ivCanc,
+      totalValue: ivTotalVal, activeValue: ivTotalVal-ivCancVal, cancelledValue: ivCancVal,
+      activeRate:       ivTotal>0?((ivTotal-ivCanc)/ivTotal*100).toFixed(1):"0.0",
+      cancellationRate: ivTotal>0?(ivCanc/ivTotal*100).toFixed(1):"0.0",
+    };
+
+    // ── SO List (one row per SO, with status) ───────────────────────────
+    const soList = await db.request()
+      .input("from", sql.Date, from).input("to", sql.Date, to)
+      .query(`
+        SELECT
+          s.SONo, CONVERT(VARCHAR,s.DocDate,103) AS DocDate,
+          s.CustomerCode, s.CustomerName, s.DeliveryAddress,
+          SUM(s.SubTotal)          AS SubTotal,
+          SUM(s.SStAmount)         AS SSTAmount,
+          MAX(hd.DOStatus)         AS DOStatus,
+          MAX(hd.CancellationRemarks) AS CancellationRemarks
+        FROM tbl_SO_Cache s
+        LEFT JOIN tCore_Header_0 h ON h.sVoucherNo=s.SONo AND h.iVoucherType=5634
+        LEFT JOIN tCore_HeaderData5634_0 hd ON hd.iHeaderId=h.iHeaderId
+        WHERE s.DocDate BETWEEN @from AND @to
+        GROUP BY s.SONo, s.DocDate, s.CustomerCode, s.CustomerName, s.DeliveryAddress
+        ORDER BY
+          CASE WHEN MAX(hd.DOStatus)=1 THEN 1
+               WHEN MAX(hd.DOStatus)=0 OR MAX(hd.DOStatus) IS NULL THEN 2
+               ELSE 3 END,
+          s.DocDate DESC
+      `);
+
+    // ── Invoice List (one row per Invoice, with status) ─────────────────
+    const ivList = await db.request()
+      .input("from", sql.Date, from).input("to", sql.Date, to)
+      .query(`
+        SELECT
+          i.InvNo, CONVERT(VARCHAR,i.InvDate,103) AS InvDate,
+          i.CustomerCode, i.CustomerName, i.BillingAddress,
+          SUM(i.Sub_Total)            AS SubTotal,
+          SUM(i.SST_Amt)              AS SSTAmount,
+          MAX(hd.InvoiceStatus)       AS InvoiceStatus,
+          MAX(hd.CancellationRemarks) AS CancellationRemarks
+        FROM vw_TodaysSalesInvoiceDetails i
+        LEFT JOIN tCore_Header_0 h ON h.sVoucherNo=i.InvNo AND h.iVoucherType=3332
+        LEFT JOIN tCore_HeaderData3332_0 hd ON hd.iHeaderId=h.iHeaderId
+        WHERE i.InvDate BETWEEN @from AND @to
+        GROUP BY i.InvNo, i.InvDate, i.CustomerCode, i.CustomerName, i.BillingAddress
+        ORDER BY
+          CASE WHEN MAX(hd.InvoiceStatus)=0 OR MAX(hd.InvoiceStatus) IS NULL THEN 1
+               ELSE 2 END,
+          i.InvDate DESC
+      `);
+
+    return res.json({
+      generatedAt: new Date().toISOString(),
+      dateFrom: from, dateTo: to,
+      soKpi:    soKpiData,
+      ivKpi:    ivKpiData,
+      soList:   soList.recordset,
+      ivList:   ivList.recordset,
+    });
+
+  } catch (err) {
+    console.error("Report Error:", err.message);
+    return res.status(500).json({ error: "Report generation failed.", detail: err.message });
+  }
+});
+
 // ── Health ─────────────────────────────────────────────────────────────────
 app.get("/api/health", (req, res) => res.json({ status: "ok", time: new Date().toISOString() }));
 
