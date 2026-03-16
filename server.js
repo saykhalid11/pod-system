@@ -273,19 +273,24 @@ app.get("/api/sales-orders", authMiddleware, async (req, res) => {
     for (const row of result.recordset) {
       if (!map[row.SONo]) {
         map[row.SONo] = {
-          id:                 row.SONo,
-          date:               row.DocDate ? row.DocDate.toISOString().split("T")[0] : "",
-          customerCode:       row.CustomerCode,
-          customer:           row.CustomerName,
-          address:            row.DeliveryAddress || "",
-          taxableAmt:         parseFloat(row.TaxableAmt)  || 0,
-          sstAmount:          parseFloat(row.SStAmount)    || 0,
-          subTotal:           parseFloat(row.SubTotal)     || 0,
-          doStatus:           row.DOStatus ?? 0,
-          cancellationRemarks:row.CancellationRemarks || "",
-          items: [],
+          id:                  row.SONo,
+          date:                row.DocDate ? row.DocDate.toISOString().split("T")[0] : "",
+          customerCode:        row.CustomerCode,
+          customer:            row.CustomerName,
+          address:             row.DeliveryAddress || "",
+          doStatus:            row.DOStatus ?? 0,
+          cancellationRemarks: row.CancellationRemarks || "",
+          // These 3 columns repeat per item row — must be SUMMED across all rows
+          taxableAmt:          0,
+          sstAmount:           0,
+          subTotal:            0,
+          items:               [],
         };
       }
+      // Sum per-item values
+      map[row.SONo].taxableAmt += parseFloat(row.TaxableAmt) || 0;
+      map[row.SONo].sstAmount  += parseFloat(row.SStAmount)  || 0;
+      map[row.SONo].subTotal   += parseFloat(row.SubTotal)   || 0;
       map[row.SONo].items.push({
         name:  row.ItemDescription,
         qty:   parseFloat(row.Qty)   || 0,
@@ -398,14 +403,19 @@ app.get("/api/invoices", authMiddleware, async (req, res) => {
           customerCode:        row.CustomerCode,
           customer:            row.CustomerName,
           address:             row.BillingAddress || "",
-          taxableAmt:          parseFloat(row.TaxableAmt)  || 0,
-          sstAmount:           parseFloat(row.SSTAmount)   || 0,
-          subTotal:            parseFloat(row.SubTotal)    || 0,
           invoiceStatus:       row.InvoiceStatus ?? 0,
           cancellationRemarks: row.CancellationRemarks || "",
-          items: [],
+          // These 3 columns repeat per item row — must be SUMMED across all rows
+          taxableAmt:          0,
+          sstAmount:           0,
+          subTotal:            0,
+          items:               [],
         };
       }
+      // Sum per-item values
+      map[row.InvNo].taxableAmt += parseFloat(row.TaxableAmt) || 0;
+      map[row.InvNo].sstAmount  += parseFloat(row.SSTAmount)  || 0;
+      map[row.InvNo].subTotal   += parseFloat(row.SubTotal)   || 0;
       map[row.InvNo].items.push({
         name:  row.ItemDescription,
         qty:   parseFloat(row.QTY)  || 0,
@@ -452,6 +462,7 @@ app.post("/api/invoices/status", authMiddleware, async (req, res) => {
 
 // ══════════════════════════════════════════════════════════════════════════
 // KPI ENDPOINTS (independent — no order load needed)
+// Uses efficient single-JOIN approach instead of correlated subqueries
 // ══════════════════════════════════════════════════════════════════════════
 
 // GET /api/kpi/so?from=&to=
@@ -464,55 +475,53 @@ app.get("/api/kpi/so", authMiddleware, async (req, res) => {
       .input("from", sql.Date, from)
       .input("to",   sql.Date, to)
       .query(`
+        -- Step 1: Get one row per SONo with its summed SubTotal and status
+        -- Join cache with header data ONCE using a CTE for efficiency
+        WITH SO_Summary AS (
+          SELECT
+            s.SONo,
+            SUM(s.SubTotal)      AS SubTotalSum,
+            MAX(hd.DOStatus)     AS DOStatus
+          FROM tbl_SO_Cache s
+          LEFT JOIN tCore_Header_0 h
+            ON h.sVoucherNo = s.SONo AND h.iVoucherType = 5634
+          LEFT JOIN tCore_HeaderData5634_0 hd
+            ON hd.iHeaderId = h.iHeaderId
+          WHERE s.DocDate BETWEEN @from AND @to
+          GROUP BY s.SONo
+        )
         SELECT
-          COUNT(DISTINCT SONo) AS TotalCount,
-          SUM(SubTotal) AS TotalValue,
-          SUM(CASE WHEN (
-            SELECT hd.DOStatus FROM tCore_Header_0 h
-            JOIN tCore_HeaderData5634_0 hd ON h.iHeaderId=hd.iHeaderId
-            WHERE h.iVoucherType=5634 AND h.sVoucherNo=SONo
-          )=1 THEN 1 ELSE 0 END) AS CompletedCount,
-          SUM(CASE WHEN (
-            SELECT hd.DOStatus FROM tCore_Header_0 h
-            JOIN tCore_HeaderData5634_0 hd ON h.iHeaderId=hd.iHeaderId
-            WHERE h.iVoucherType=5634 AND h.sVoucherNo=SONo
-          )=2 THEN 1 ELSE 0 END) AS CancelledCount,
-          SUM(CASE WHEN (
-            SELECT hd.SubTotal FROM tCore_Header_0 h
-            JOIN tCore_HeaderData5634_0 hd ON h.iHeaderId=hd.iHeaderId
-            WHERE h.iVoucherType=5634 AND h.sVoucherNo=SONo
-          ) IS NOT NULL AND (
-            SELECT hd.DOStatus FROM tCore_Header_0 h
-            JOIN tCore_HeaderData5634_0 hd ON h.iHeaderId=hd.iHeaderId
-            WHERE h.iVoucherType=5634 AND h.sVoucherNo=SONo
-          )=1 THEN SubTotal ELSE 0 END) AS CompletedValue,
-          SUM(CASE WHEN (
-            SELECT hd.DOStatus FROM tCore_Header_0 h
-            JOIN tCore_HeaderData5634_0 hd ON h.iHeaderId=hd.iHeaderId
-            WHERE h.iVoucherType=5634 AND h.sVoucherNo=SONo
-          )=2 THEN SubTotal ELSE 0 END) AS CancelledValue
-        FROM tbl_SO_Cache
-        WHERE DocDate BETWEEN @from AND @to
+          COUNT(*)                                              AS TotalCount,
+          SUM(SubTotalSum)                                      AS TotalValue,
+          SUM(CASE WHEN DOStatus = 1 THEN 1 ELSE 0 END)        AS CompletedCount,
+          SUM(CASE WHEN DOStatus = 2 THEN 1 ELSE 0 END)        AS CancelledCount,
+          SUM(CASE WHEN DOStatus = 1 THEN SubTotalSum ELSE 0 END) AS CompletedValue,
+          SUM(CASE WHEN DOStatus = 2 THEN SubTotalSum ELSE 0 END) AS CancelledValue
+        FROM SO_Summary
       `);
-    const r = result.recordset[0];
+    const r         = result.recordset[0];
     const total     = r.TotalCount     || 0;
     const completed = r.CompletedCount || 0;
     const cancelled = r.CancelledCount || 0;
     const pending   = total - completed - cancelled;
+    const totalVal  = parseFloat(r.TotalValue)     || 0;
+    const compVal   = parseFloat(r.CompletedValue) || 0;
+    const cancVal   = parseFloat(r.CancelledValue) || 0;
     return res.json({
-      totalCount:     total,
-      completedCount: completed,
-      cancelledCount: cancelled,
-      pendingCount:   pending,
-      totalValue:     parseFloat(r.TotalValue)     || 0,
-      completedValue: parseFloat(r.CompletedValue) || 0,
-      cancelledValue: parseFloat(r.CancelledValue) || 0,
-      pendingValue:   (parseFloat(r.TotalValue)||0) - (parseFloat(r.CompletedValue)||0) - (parseFloat(r.CancelledValue)||0),
-      completionRate: total > 0 ? (completed / total * 100).toFixed(1) : "0.0",
+      totalCount:       total,
+      completedCount:   completed,
+      cancelledCount:   cancelled,
+      pendingCount:     pending,
+      totalValue:       totalVal,
+      completedValue:   compVal,
+      cancelledValue:   cancVal,
+      pendingValue:     totalVal - compVal - cancVal,
+      completionRate:   total > 0 ? (completed / total * 100).toFixed(1) : "0.0",
       cancellationRate: total > 0 ? (cancelled / total * 100).toFixed(1) : "0.0",
     });
   } catch (err) {
-    return res.status(500).json({ error: "KPI query failed.", detail: err.message });
+    console.error("SO KPI Error:", err.message);
+    return res.status(500).json({ error: "SO KPI query failed.", detail: err.message });
   }
 });
 
@@ -526,38 +535,46 @@ app.get("/api/kpi/invoices", authMiddleware, async (req, res) => {
       .input("from", sql.Date, from)
       .input("to",   sql.Date, to)
       .query(`
+        -- Step 1: Get one row per InvNo with its summed SubTotal and status
+        WITH IV_Summary AS (
+          SELECT
+            i.InvNo,
+            SUM(i.Sub_Total)         AS SubTotalSum,
+            MAX(hd.InvoiceStatus)    AS InvoiceStatus
+          FROM vw_TodaysSalesInvoiceDetails i
+          LEFT JOIN tCore_Header_0 h
+            ON h.sVoucherNo = i.InvNo AND h.iVoucherType = 3332
+          LEFT JOIN tCore_HeaderData3332_0 hd
+            ON hd.iHeaderId = h.iHeaderId
+          WHERE i.InvDate BETWEEN @from AND @to
+          GROUP BY i.InvNo
+        )
         SELECT
-          COUNT(DISTINCT InvNo) AS TotalCount,
-          SUM(Sub_Total) AS TotalValue,
-          SUM(CASE WHEN (
-            SELECT hd.InvoiceStatus FROM tCore_Header_0 h
-            JOIN tCore_HeaderData3332_0 hd ON h.iHeaderId=hd.iHeaderId
-            WHERE h.iVoucherType=3332 AND h.sVoucherNo=InvNo
-          )=2 THEN 1 ELSE 0 END) AS CancelledCount,
-          SUM(CASE WHEN (
-            SELECT hd.InvoiceStatus FROM tCore_Header_0 h
-            JOIN tCore_HeaderData3332_0 hd ON h.iHeaderId=hd.iHeaderId
-            WHERE h.iVoucherType=3332 AND h.sVoucherNo=InvNo
-          )=2 THEN Sub_Total ELSE 0 END) AS CancelledValue
-        FROM vw_TodaysSalesInvoiceDetails
-        WHERE InvDate BETWEEN @from AND @to
+          COUNT(*)                                                 AS TotalCount,
+          SUM(SubTotalSum)                                         AS TotalValue,
+          SUM(CASE WHEN InvoiceStatus = 2 THEN 1 ELSE 0 END)      AS CancelledCount,
+          SUM(CASE WHEN InvoiceStatus = 2 THEN SubTotalSum ELSE 0 END) AS CancelledValue
+        FROM IV_Summary
       `);
-    const r = result.recordset[0];
+    const r         = result.recordset[0];
     const total     = r.TotalCount     || 0;
     const cancelled = r.CancelledCount || 0;
     const active    = total - cancelled;
+    const totalVal  = parseFloat(r.TotalValue)     || 0;
+    const cancVal   = parseFloat(r.CancelledValue) || 0;
     return res.json({
-      totalCount:     total,
-      activeCount:    active,
-      cancelledCount: cancelled,
-      totalValue:     parseFloat(r.TotalValue)     || 0,
-      activeValue:    (parseFloat(r.TotalValue)||0) - (parseFloat(r.CancelledValue)||0),
-      cancelledValue: parseFloat(r.CancelledValue) || 0,
-      activeRate:     total > 0 ? (active / total * 100).toFixed(1) : "0.0",
+      totalCount:       total,
+      activeCount:      active,
+      cancelledCount:   cancelled,
+      totalValue:       totalVal,
+      activeValue:      totalVal - cancVal,
+      cancelledValue:   cancVal,
+      activeRate:       total > 0 ? (active    / total * 100).toFixed(1) : "0.0",
       cancellationRate: total > 0 ? (cancelled / total * 100).toFixed(1) : "0.0",
     });
   } catch (err) {
-    return res.status(500).json({ error: "KPI query failed.", detail: err.message });
+    console.error("IV KPI Error:", err.message);
+    return res.status(500).json({ error: "Invoice KPI query failed.", detail: err.message });
   }
 });
 
