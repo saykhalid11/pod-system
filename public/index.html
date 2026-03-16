@@ -278,9 +278,9 @@ function UserManagement({ addToast }){
     finally{ setSaving(false); }
   }
 
-  const Right = ({label,val,key}) => (
+  const Right = ({label,val,field}) => (
     <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13}}>
-      <input type="checkbox" checked={val} onChange={e=>setForm(f=>({...f,[key]:e.target.checked}))} style={{width:15,height:15,accentColor:"var(--accent)"}}/>
+      <input type="checkbox" checked={!!val} onChange={e=>setForm(f=>({...f,[field]:e.target.checked}))} style={{width:15,height:15,accentColor:"var(--accent)"}}/>
       {label}
     </label>
   );
@@ -311,11 +311,11 @@ function UserManagement({ addToast }){
           </div>
           <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Permissions</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10,marginBottom:16}}>
-            <Right label="Can Submit / Update Status"        val={form.canSubmit}       key="canSubmit"/>
-            <Right label="Can Edit After Status is Set"      val={form.canEditAfterSet} key="canEditAfterSet"/>
-            <Right label="Can View Reports & KPI"            val={form.canViewReports}  key="canViewReports"/>
-            <Right label="Can Manage Users (Admin)"          val={form.canManageUsers}  key="canManageUsers"/>
-            {editUser&&<Right label="Active"                 val={form.isActive}        key="isActive"/>}
+            <Right label="Can Submit / Update Status"        val={form.canSubmit}       field="canSubmit"/>
+            <Right label="Can Edit After Status is Set"      val={form.canEditAfterSet} field="canEditAfterSet"/>
+            <Right label="Can View Reports & KPI"            val={form.canViewReports}  field="canViewReports"/>
+            <Right label="Can Manage Users (Admin)"          val={form.canManageUsers}  field="canManageUsers"/>
+            {editUser&&<Right label="Active"                 val={form.isActive}        field="isActive"/>}
           </div>
           <div style={{display:"flex",gap:10}}>
             <button onClick={saveUser} disabled={saving} style={{...btnPrimary,opacity:saving?.7:1}}>{saving?"Saving…":"Save"}</button>
@@ -348,7 +348,7 @@ function UserManagement({ addToast }){
                   </span>
                 </td>
                 <td style={{padding:"10px 14px"}}>
-                  {!u.IsSuperAdmin&&<button onClick={()=>openEdit(u)} style={{padding:"5px 12px",borderRadius:7,background:"var(--surface2)",border:"1px solid var(--border2)",color:"var(--text2)",fontSize:12,cursor:"pointer"}}>Edit</button>}
+                  <button onClick={()=>openEdit(u)} style={{padding:"5px 12px",borderRadius:7,background:"var(--surface2)",border:"1px solid var(--border2)",color:"var(--text2)",fontSize:12,cursor:"pointer"}}>Edit</button>
                 </td>
               </tr>
             ))}
