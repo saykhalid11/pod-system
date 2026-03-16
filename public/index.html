@@ -3,124 +3,143 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>POD System — Proof of Delivery</title>
+<title>POD System v2</title>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #0d0f14; color: #e8ecf4; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
-  body::before { content:''; position:fixed; inset:0; pointer-events:none; background-image:linear-gradient(rgba(79,142,247,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(79,142,247,.025) 1px,transparent 1px); background-size:36px 36px; }
-  input[type=date]::-webkit-calendar-picker-indicator { filter: invert(.4); cursor: pointer; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes fadeSlideIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
-  @keyframes toastIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
-  @keyframes barGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
-  @keyframes ringFill { from { stroke-dasharray: 0 999; } }
-  ::-webkit-scrollbar { width:6px; height:6px; }
-  ::-webkit-scrollbar-track { background:#13161e; }
-  ::-webkit-scrollbar-thumb { background:#2e3547; border-radius:3px; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0d0f14; --surface: #13161e; --surface2: #1a1e28; --surface3: #21263300;
+  --border: #252a38; --border2: #2e3547;
+  --text: #e8ecf4; --text2: #8b93a8; --text3: #4a5268;
+  --accent: #4f8ef7; --accent2: #7c5cfc;
+  --green: #22c55e; --orange: #f59e0b; --red: #ef4444;
+  --shadow: 0 8px 30px rgba(0,0,0,.4);
+}
+.light {
+  --bg: #f0f2f7; --surface: #ffffff; --surface2: #f5f7fc; --surface3: #eef0f7;
+  --border: #dde1ed; --border2: #c8cde0;
+  --text: #1a1e2e; --text2: #4a5268; --text3: #8b93a8;
+  --shadow: 0 8px 30px rgba(0,0,0,.1);
+}
+body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; font-size:14px; min-height:100vh; transition:background .3s,color .3s; }
+body::before { content:''; position:fixed; inset:0; pointer-events:none; background-image:linear-gradient(rgba(79,142,247,.02) 1px,transparent 1px),linear-gradient(90deg,rgba(79,142,247,.02) 1px,transparent 1px); background-size:36px 36px; }
+input,textarea,select { font-family:inherit; }
+input[type=date]::-webkit-calendar-picker-indicator { filter:invert(.4); cursor:pointer; }
+.light input[type=date]::-webkit-calendar-picker-indicator { filter:none; }
+@keyframes spin { to { transform:rotate(360deg); } }
+@keyframes fadeIn { from{opacity:0;transform:translateY(-8px)} to{opacity:1;transform:translateY(0)} }
+@keyframes toastIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+@keyframes barGrow { from{transform:scaleY(0)} to{transform:scaleY(1)} }
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px}
+.surface2{background:var(--surface2)}
+button:focus{outline:none}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useMemo, useEffect } = React;
+const { useState, useMemo, useEffect, useCallback } = React;
+const API = "";
 
-const API_BASE = "";
+// ── helpers ───────────────────────────────────────────────────────────────
+const fmtDate = d => d ? d.toISOString ? d.toISOString().split("T")[0] : d : "";
+const today   = fmtDate(new Date());
+const fom     = fmtDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+const last7   = fmtDate(new Date(Date.now() - 6*864e5));
+const fmtRM   = v => `RM ${(+v||0).toLocaleString("en-MY",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 
-const C = {
-  bg:"#0d0f14", surface:"#13161e", surface2:"#1a1e28",
-  border:"#252a38", border2:"#2e3547",
-  accent:"#4f8ef7", accent2:"#7c5cfc",
-  text:"#e8ecf4", text2:"#8b93a8", text3:"#4a5268",
-  green:"#22c55e", orange:"#f59e0b", red:"#ef4444",
+function getToken(){ return localStorage.getItem("pod_token"); }
+function getUser(){ try{ return JSON.parse(localStorage.getItem("pod_user")); }catch{ return null; } }
+function saveAuth(token,user){ localStorage.setItem("pod_token",token); localStorage.setItem("pod_user",JSON.stringify(user)); }
+function clearAuth(){ localStorage.removeItem("pod_token"); localStorage.removeItem("pod_user"); }
+
+async function apiFetch(url, options={}){
+  const token = getToken();
+  const res = await fetch(API+url, {
+    ...options,
+    headers: { "Content-Type":"application/json", ...(token?{"Authorization":`Bearer ${token}`}:{}), ...options.headers }
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+// ── SO/IV status helpers ──────────────────────────────────────────────────
+const SO_STATUS = {
+  0: { label:"Pending",   color:"#f59e0b", bg:"rgba(245,158,11,.12)", icon:"⏳" },
+  1: { label:"Completed", color:"#22c55e", bg:"rgba(34,197,94,.12)",  icon:"✅" },
+  2: { label:"Cancelled", color:"#ef4444", bg:"rgba(239,68,68,.12)",  icon:"❌" },
+};
+const IV_STATUS = {
+  0: { label:"Active",    color:"#22c55e", bg:"rgba(34,197,94,.12)",  icon:"✅" },
+  2: { label:"Cancelled", color:"#ef4444", bg:"rgba(239,68,68,.12)",  icon:"❌" },
 };
 
-const STATUS_CFG = {
-  completed:{ label:"Completed", color:C.green,  bg:"rgba(34,197,94,.12)",  icon:"✅", desc:"Goods delivered & acknowledged" },
-  pending:  { label:"Pending",   color:C.orange, bg:"rgba(245,158,11,.12)", icon:"⏳", desc:"Delivery in progress or scheduled" },
-  cancelled:{ label:"Cancelled", color:C.red,    bg:"rgba(239,68,68,.12)",  icon:"❌", desc:"Delivery cancelled or rejected" },
-};
-
-function fmt(d){ return d.toISOString().split("T")[0]; }
-const today = fmt(new Date());
-const fom   = fmt(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
-const fmtRM = v => `RM ${(+v||0).toLocaleString("en-MY",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
-
-// ── Badge ─────────────────────────────────────────────────────────────────
-function Badge({ status }){
-  if(!status) return <span style={{fontFamily:"monospace",fontSize:11,color:C.text3,background:"rgba(255,255,255,.05)",borderRadius:20,padding:"3px 10px"}}>— Not Set</span>;
-  const c = STATUS_CFG[status];
-  return <span style={{fontFamily:"monospace",fontSize:11,fontWeight:600,color:c.color,background:c.bg,borderRadius:20,padding:"3px 10px",display:"inline-flex",alignItems:"center",gap:5}}>
-    <span style={{width:5,height:5,borderRadius:"50%",background:c.color,display:"inline-block"}}/>{c.label}
+function StatusBadge({ statusMap, value }){
+  const s = statusMap[value ?? 0] || statusMap[0];
+  return <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 10px",borderRadius:20,background:s.bg,color:s.color,fontFamily:"monospace",fontSize:11,fontWeight:600}}>
+    <span style={{width:5,height:5,borderRadius:"50%",background:s.color,display:"inline-block"}}/>{s.label}
   </span>;
 }
 
-// ── Toasts ────────────────────────────────────────────────────────────────
+// ── Toast ─────────────────────────────────────────────────────────────────
 function Toasts({ list }){
   return <div style={{position:"fixed",bottom:20,right:20,zIndex:9999,display:"flex",flexDirection:"column",gap:8}}>
     {list.map(t=>(
-      <div key={t.id} style={{background:C.surface2,border:`1px solid ${t.type==="success"?"rgba(34,197,94,.35)":"rgba(239,68,68,.35)"}`,borderRadius:12,padding:"12px 16px",display:"flex",alignItems:"center",gap:10,minWidth:270,boxShadow:"0 8px 30px rgba(0,0,0,.5)",animation:"toastIn .3s ease"}}>
-        <span style={{fontSize:16}}>{t.type==="success"?"✅":"⚠️"}</span>
+      <div key={t.id} style={{background:"var(--surface2)",border:`1px solid ${t.type==="success"?"rgba(34,197,94,.4)":t.type==="warn"?"rgba(245,158,11,.4)":"rgba(239,68,68,.4)"}`,borderRadius:12,padding:"12px 16px",display:"flex",alignItems:"center",gap:10,minWidth:270,boxShadow:"var(--shadow)",animation:"toastIn .3s ease"}}>
+        <span style={{fontSize:16}}>{t.type==="success"?"✅":t.type==="warn"?"⚠️":"❌"}</span>
         <div>
-          <div style={{fontSize:13,fontWeight:700,color:C.text}}>{t.title}</div>
-          <div style={{fontSize:11,color:C.text2,fontFamily:"monospace"}}>{t.msg}</div>
+          <div style={{fontSize:13,fontWeight:700,color:"var(--text)"}}>{t.title}</div>
+          <div style={{fontSize:11,color:"var(--text2)",fontFamily:"monospace"}}>{t.msg}</div>
         </div>
       </div>
     ))}
   </div>;
 }
 
-// ── KPI Ring (pure SVG) ───────────────────────────────────────────────────
+// ── KPI Ring ──────────────────────────────────────────────────────────────
 function KPIRing({ pct, color, label, sub }){
-  const r = 52, circ = 2 * Math.PI * r;
-  const dash = (Math.min(pct,100) / 100) * circ;
+  const r=52, circ=2*Math.PI*r, dash=(Math.min(+pct||0,100)/100)*circ;
   return (
-    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
       <div style={{position:"relative",width:136,height:136}}>
         <svg width="136" height="136">
-          <circle cx="68" cy="68" r={r} fill="none" stroke={C.border2} strokeWidth="10" transform="rotate(-90 68 68)"/>
+          <circle cx="68" cy="68" r={r} fill="none" stroke="var(--border2)" strokeWidth="10" transform="rotate(-90 68 68)"/>
           <circle cx="68" cy="68" r={r} fill="none" stroke={color} strokeWidth="10"
-            strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
-            transform="rotate(-90 68 68)"
-            style={{transition:"stroke-dasharray 1s ease",animation:"ringFill .8s ease"}}/>
+            strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" transform="rotate(-90 68 68)"
+            style={{transition:"stroke-dasharray 1s ease"}}/>
         </svg>
         <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-          <div style={{fontSize:24,fontWeight:800,color,letterSpacing:-1,lineHeight:1}}>{pct.toFixed(1)}%</div>
-          <div style={{fontFamily:"monospace",fontSize:9,color:C.text3,letterSpacing:.5,textTransform:"uppercase",marginTop:3,textAlign:"center",padding:"0 8px"}}>{label}</div>
+          <div style={{fontSize:22,fontWeight:800,color,letterSpacing:-1,lineHeight:1}}>{(+pct||0).toFixed(1)}%</div>
+          <div style={{fontFamily:"monospace",fontSize:9,color:"var(--text3)",letterSpacing:.5,textTransform:"uppercase",marginTop:3,textAlign:"center",padding:"0 8px"}}>{label}</div>
         </div>
       </div>
-      <div style={{fontFamily:"monospace",fontSize:11,color:C.text2,textAlign:"center",maxWidth:160,lineHeight:1.5}}>{sub}</div>
+      <div style={{fontFamily:"monospace",fontSize:11,color:"var(--text2)",textAlign:"center",maxWidth:160,lineHeight:1.5}}>{sub}</div>
     </div>
   );
 }
 
-// ── Bar Chart (pure CSS/SVG) ──────────────────────────────────────────────
-function BarChart({ bars, maxVal, isValue }){
-  const chartH = 180;
+function BarChartSimple({ bars, isValue }){
+  const maxV = Math.max(...bars.map(b=>b.value),1);
+  const h = 160;
   return (
-    <div style={{display:"flex",alignItems:"flex-end",gap:8,height:chartH+40,paddingTop:10}}>
+    <div style={{display:"flex",alignItems:"flex-end",gap:8,height:h+48,paddingTop:8}}>
       {bars.map((b,i)=>{
-        const pct = maxVal > 0 ? (b.value / maxVal) : 0;
-        const h   = Math.max(pct * chartH, b.value > 0 ? 4 : 0);
+        const ph = Math.max((b.value/maxV)*h, b.value>0?4:0);
         return (
-          <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
-            {/* Value label */}
-            <div style={{fontFamily:"monospace",fontSize:10,color:b.color,fontWeight:700,textAlign:"center",minHeight:16}}>
-              {isValue ? (b.value>=1000?`${(b.value/1000).toFixed(1)}k`:b.value.toFixed(0)) : (b.value||"")}
+          <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+            <div style={{fontFamily:"monospace",fontSize:10,color:b.color,fontWeight:700,textAlign:"center",minHeight:14}}>
+              {b.value>0?(isValue?(b.value>=1000?`${(b.value/1000).toFixed(1)}k`:b.value.toFixed(0)):b.value):""}
             </div>
-            {/* Bar */}
-            <div style={{width:"100%",height:chartH,display:"flex",alignItems:"flex-end"}}>
-              <div style={{
-                width:"100%", height:h, background:b.color, borderRadius:"4px 4px 0 0",
-                transformOrigin:"bottom", animation:"barGrow .6s ease",
-                boxShadow:`0 0 12px ${b.color}44`, transition:"height .6s ease",
-                minHeight: b.value>0?4:0
-              }}/>
+            <div style={{width:"100%",height:h,display:"flex",alignItems:"flex-end"}}>
+              <div style={{width:"100%",height:ph,background:b.color,borderRadius:"4px 4px 0 0",transformOrigin:"bottom",animation:"barGrow .6s ease",boxShadow:`0 0 10px ${b.color}44`,transition:"height .6s ease"}}/>
             </div>
-            {/* Label */}
-            <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,textAlign:"center",lineHeight:1.3,wordBreak:"break-word"}}>{b.label}</div>
+            <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",textAlign:"center",lineHeight:1.3,wordBreak:"break-word"}}>{b.label}</div>
           </div>
         );
       })}
@@ -128,38 +147,29 @@ function BarChart({ bars, maxVal, isValue }){
   );
 }
 
-// ── Donut Chart (pure SVG) ────────────────────────────────────────────────
 function DonutChart({ slices }){
-  const total = slices.reduce((s,x)=>s+x.value,0);
-  if(!total) return <div style={{textAlign:"center",color:C.text3,fontFamily:"monospace",fontSize:12,padding:40}}>No data</div>;
-  let angle = -90;
-  const cx=90, cy=90, r=65, inner=42;
-  const paths = slices.map(s=>{
-    const pct   = s.value / total;
-    const start = angle;
-    angle      += pct * 360;
-    const end   = angle;
-    const s1    = polarToXY(cx, cy, r, start);
-    const e1    = polarToXY(cx, cy, r, end);
-    const s2    = polarToXY(cx, cy, inner, end);
-    const e2    = polarToXY(cx, cy, inner, start);
-    const large = (pct > 0.5) ? 1 : 0;
-    return { ...s, d:`M${s1.x},${s1.y} A${r},${r} 0 ${large},1 ${e1.x},${e1.y} L${s2.x},${s2.y} A${inner},${inner} 0 ${large},0 ${e2.x},${e2.y} Z`, pct };
+  const total=slices.reduce((s,x)=>s+x.value,0);
+  if(!total) return <div style={{textAlign:"center",color:"var(--text3)",fontFamily:"monospace",fontSize:12,padding:30}}>No data</div>;
+  let angle=-90;
+  const cx=90,cy=90,r=68,inner=44;
+  function polar(cx,cy,r,deg){ const rad=deg*Math.PI/180; return{x:cx+r*Math.cos(rad),y:cy+r*Math.sin(rad)}; }
+  const paths=slices.map(s=>{
+    const pct=s.value/total, start=angle; angle+=pct*360; const end=angle;
+    const s1=polar(cx,cy,r,start),e1=polar(cx,cy,r,end);
+    const s2=polar(cx,cy,inner,end),e2=polar(cx,cy,inner,start);
+    const large=pct>.5?1:0;
+    return{...s,d:`M${s1.x},${s1.y} A${r},${r} 0 ${large},1 ${e1.x},${e1.y} L${s2.x},${s2.y} A${inner},${inner} 0 ${large},0 ${e2.x},${e2.y} Z`,pct};
   });
   return (
-    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:14}}>
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12}}>
       <svg width="180" height="180">
-        {paths.map((p,i)=>(
-          <path key={i} d={p.d} fill={p.color} opacity={.9} style={{transition:"opacity .2s"}}
-            onMouseEnter={e=>e.target.style.opacity=1}
-            onMouseLeave={e=>e.target.style.opacity=.9}/>
-        ))}
-        <text x={cx} y={cy-6} textAnchor="middle" fill={C.text} fontSize="18" fontWeight="800">{total}</text>
-        <text x={cx} y={cy+12} textAnchor="middle" fill={C.text3} fontSize="10" fontFamily="monospace">ORDERS</text>
+        {paths.map((p,i)=><path key={i} d={p.d} fill={p.color} opacity={.88}/>)}
+        <text x={cx} y={cy-6} textAnchor="middle" fill="var(--text)" fontSize="20" fontWeight="800">{total}</text>
+        <text x={cx} y={cy+12} textAnchor="middle" fill="var(--text3)" fontSize="10" fontFamily="monospace">TOTAL</text>
       </svg>
-      <div style={{display:"flex",flexWrap:"wrap",gap:"6px 14px",justifyContent:"center"}}>
+      <div style={{display:"flex",flexWrap:"wrap",gap:"5px 12px",justifyContent:"center"}}>
         {paths.map((p,i)=>(
-          <div key={i} style={{display:"flex",alignItems:"center",gap:5,fontFamily:"monospace",fontSize:11,color:C.text2}}>
+          <div key={i} style={{display:"flex",alignItems:"center",gap:5,fontFamily:"monospace",fontSize:11,color:"var(--text2)"}}>
             <span style={{width:8,height:8,borderRadius:"50%",background:p.color,display:"inline-block"}}/>
             {p.label} ({p.value}) · {(p.pct*100).toFixed(1)}%
           </div>
@@ -169,219 +179,243 @@ function DonutChart({ slices }){
   );
 }
 
-function polarToXY(cx,cy,r,deg){
-  const rad = (deg * Math.PI) / 180;
-  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
-}
+// ── Shared input style ────────────────────────────────────────────────────
+const inp = { background:"var(--surface2)", border:"1px solid var(--border2)", color:"var(--text)", fontFamily:"monospace", fontSize:13, padding:"8px 11px", borderRadius:8, outline:"none", width:"100%" };
+const btnPrimary = { padding:"9px 20px", borderRadius:9, background:"linear-gradient(135deg,#4f8ef7,#7c5cfc)", color:"#fff", fontWeight:700, fontSize:13, cursor:"pointer", border:"none", boxShadow:"0 4px 14px rgba(79,142,247,.28)", transition:"all .2s" };
 
-// ── REPORTS PAGE ──────────────────────────────────────────────────────────
-function ReportsPage({ orders, pod, dateFrom, dateTo, loaded }){
-  const data = useMemo(()=>{
-    if(!orders.length) return null;
-    let totalCount=0,compCount=0,pendCount=0,cancCount=0,noneCount=0;
-    let totalVal=0,compVal=0,pendVal=0,cancVal=0;
+// ══════════════════════════════════════════════════════════════════════════
+// LOGIN PAGE
+// ══════════════════════════════════════════════════════════════════════════
+function LoginPage({ onLogin, darkMode, toggleDark }){
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState("");
 
-    orders.forEach(o=>{
-      const st  = pod[o.id]?.status||null;
-      const val = +(o.subTotal)||o.items.reduce((s,it)=>s+(+it.gross||0),0);
-      totalCount++; totalVal+=val;
-      if(st==="completed"){compCount++;compVal+=val;}
-      else if(st==="pending"){pendCount++;pendVal+=val;}
-      else if(st==="cancelled"){cancCount++;cancVal+=val;}
-      else noneCount++;
-    });
-
-    const submitted   = compCount+pendCount+cancCount;
-    const kpiComplete = totalCount>0?(compCount/totalCount)*100:0;
-    const kpiUpdated  = totalCount>0?(submitted/totalCount)*100:0;
-    const kpiValue    = totalVal>0?(compVal/totalVal)*100:0;
-
-    return {
-      totalCount,compCount,pendCount,cancCount,noneCount,
-      totalVal,compVal,pendVal,cancVal,
-      kpiComplete,kpiUpdated,kpiValue,
-      countBars:[
-        {label:"All",     value:totalCount, color:C.accent},
-        {label:"Done",    value:compCount,  color:C.green},
-        {label:"Pending", value:pendCount,  color:C.orange},
-        {label:"Cancel",  value:cancCount,  color:C.red},
-        {label:"No Status",value:noneCount, color:C.text3},
-      ],
-      valueBars:[
-        {label:"All",    value:+totalVal.toFixed(2), color:C.accent},
-        {label:"Done",   value:+compVal.toFixed(2),  color:C.green},
-        {label:"Pending",value:+pendVal.toFixed(2),  color:C.orange},
-        {label:"Cancel", value:+cancVal.toFixed(2),  color:C.red},
-      ],
-      donut:[
-        {label:"Completed", value:compCount, color:C.green},
-        {label:"Pending",   value:pendCount, color:C.orange},
-        {label:"Cancelled", value:cancCount, color:C.red},
-        {label:"Not Set",   value:noneCount, color:C.text3},
-      ].filter(x=>x.value>0),
-    };
-  },[orders,pod]);
-
-  const card = { background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"20px 24px" };
-
-  if(!loaded) return (
-    <div style={{padding:80,textAlign:"center"}}>
-      <div style={{fontSize:40,opacity:.2}}>📊</div>
-      <div style={{fontFamily:"monospace",fontSize:13,color:C.text3,marginTop:12}}>Load orders first to see reports.</div>
-    </div>
-  );
-  if(!data||!orders.length) return (
-    <div style={{padding:80,textAlign:"center"}}>
-      <div style={{fontSize:40,opacity:.2}}>🔍</div>
-      <div style={{fontFamily:"monospace",fontSize:13,color:C.text3,marginTop:12}}>No orders in selected range.</div>
-    </div>
-  );
-
-  const maxCount = Math.max(...data.countBars.map(b=>b.value),1);
-  const maxValue = Math.max(...data.valueBars.map(b=>b.value),1);
+  async function handleLogin(e){
+    e.preventDefault();
+    if(!username||!password){ setError("Enter username and password."); return; }
+    setLoading(true); setError("");
+    try{
+      const data = await apiFetch("/api/auth/login",{ method:"POST", body:JSON.stringify({username,password}) });
+      saveAuth(data.token, data.user);
+      onLogin(data.user);
+    }catch(err){ setError(err.message); }
+    finally{ setLoading(false); }
+  }
 
   return (
-    <div style={{display:"flex",flexDirection:"column",gap:18}}>
-
-      {/* Period */}
-      <div style={{fontFamily:"monospace",fontSize:11,color:C.text3}}>
-        Period: <span style={{color:C.text2}}>{dateFrom} → {dateTo}</span>
-        &nbsp;·&nbsp;<span style={{color:C.accent}}>{data.totalCount} orders</span>
-        &nbsp;·&nbsp;Total <span style={{color:C.accent}}>{fmtRM(data.totalVal)}</span>
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20,position:"relative"}}>
+      <div style={{position:"absolute",top:20,right:20}}>
+        <button onClick={toggleDark} style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:8,padding:"6px 12px",cursor:"pointer",color:"var(--text)",fontSize:16}}>{darkMode?"☀️":"🌙"}</button>
       </div>
-
-      {/* ── KPI Rings ── */}
-      <div style={{...card}}>
-        <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:22}}>📈 Key Performance Indicators</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:20}}>
-          <KPIRing pct={data.kpiComplete} color={C.green}   label="Completion Rate"  sub={`${data.compCount} of ${data.totalCount} orders completed`}/>
-          <KPIRing pct={data.kpiUpdated}  color={C.accent}  label="Update Rate"      sub={`${data.compCount+data.pendCount+data.cancCount} of ${data.totalCount} orders updated`}/>
-          <KPIRing pct={data.kpiValue}    color={C.accent2} label="Value Delivered"  sub={`${fmtRM(data.compVal)} of ${fmtRM(data.totalVal)}`}/>
+      <div className="card" style={{width:"100%",maxWidth:400,padding:40,animation:"fadeIn .4s ease"}}>
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <div style={{width:56,height:56,borderRadius:14,background:"linear-gradient(135deg,#4f8ef7,#7c5cfc)",display:"grid",placeItems:"center",fontSize:26,margin:"0 auto 16px"}}>📦</div>
+          <div style={{fontSize:22,fontWeight:800,letterSpacing:-.5}}>POD <span style={{color:"var(--accent)"}}>System</span></div>
+          <div style={{fontFamily:"monospace",fontSize:11,color:"var(--text3)",marginTop:4}}>Proof of Delivery Portal</div>
         </div>
-      </div>
-
-      {/* ── Summary Cards ── */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
-        {[
-          {lbl:"Total Orders", cnt:data.totalCount, val:data.totalVal, color:C.accent, icon:"📋"},
-          {lbl:"Completed",    cnt:data.compCount,  val:data.compVal,  color:C.green,  icon:"✅"},
-          {lbl:"Pending",      cnt:data.pendCount,  val:data.pendVal,  color:C.orange, icon:"⏳"},
-          {lbl:"Cancelled",    cnt:data.cancCount,  val:data.cancVal,  color:C.red,    icon:"❌"},
-        ].map(c=>(
-          <div key={c.lbl} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:13,padding:"16px 18px"}}>
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
-              <div style={{width:34,height:34,borderRadius:8,background:`${c.color}18`,display:"grid",placeItems:"center",fontSize:15}}>{c.icon}</div>
-              <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,textTransform:"uppercase",letterSpacing:.8}}>{c.lbl}</div>
-            </div>
-            <div style={{fontSize:28,fontWeight:800,letterSpacing:-1,color:c.color,lineHeight:1}}>{c.cnt}</div>
-            <div style={{fontFamily:"monospace",fontSize:11,color:C.text2,marginTop:6}}>{fmtRM(c.val)}</div>
+        {error && <div style={{background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.3)",borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:13,color:"#ef4444"}}>{error}</div>}
+        <form onSubmit={handleLogin} style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div>
+            <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Username</div>
+            <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Enter username" style={{...inp}} autoFocus/>
           </div>
-        ))}
-      </div>
-
-      {/* ── Bar Charts ── */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-        <div style={card}>
-          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>📦 Order Count Breakdown</div>
-          <BarChart bars={data.countBars} maxVal={maxCount} isValue={false}/>
-        </div>
-        <div style={card}>
-          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>💰 Order Value Breakdown (RM)</div>
-          <BarChart bars={data.valueBars} maxVal={maxValue} isValue={true}/>
+          <div>
+            <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Password</div>
+            <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter password" style={{...inp}}/>
+          </div>
+          <button type="submit" disabled={loading} style={{...btnPrimary,width:"100%",padding:12,marginTop:4,opacity:loading?.7:1}}>
+            {loading?"⌛ Signing in…":"→ Sign In"}
+          </button>
+        </form>
+        <div style={{textAlign:"center",marginTop:20,fontFamily:"monospace",fontSize:10,color:"var(--text3)"}}>
+          Default: admin / Admin@123
         </div>
       </div>
-
-      {/* ── Donut + Table ── */}
-      <div style={{display:"grid",gridTemplateColumns:"320px 1fr",gap:16}}>
-        <div style={card}>
-          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:16}}>🥧 Status Distribution</div>
-          <DonutChart slices={data.donut}/>
-        </div>
-
-        <div style={card}>
-          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:16}}>🎯 Performance Summary</div>
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-            <thead>
-              <tr style={{background:C.surface2}}>
-                {["Status","Count","Value (RM)","% Count","% Value"].map(h=>(
-                  <th key={h} style={{padding:"8px 12px",textAlign:"left",fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:.8,textTransform:"uppercase",borderBottom:`1px solid ${C.border}`,fontWeight:500}}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                {lbl:"✅ Completed",  cnt:data.compCount, val:data.compVal, color:C.green},
-                {lbl:"⏳ Pending",    cnt:data.pendCount, val:data.pendVal, color:C.orange},
-                {lbl:"❌ Cancelled",  cnt:data.cancCount, val:data.cancVal, color:C.red},
-                {lbl:"— Not Updated",cnt:data.noneCount, val:0,            color:C.text3},
-              ].map((r,i)=>{
-                const cp = data.totalCount>0?(r.cnt/data.totalCount*100).toFixed(1):0;
-                const vp = data.totalVal>0?(r.val/data.totalVal*100).toFixed(1):0;
-                return (
-                  <tr key={i} style={{borderBottom:`1px solid rgba(255,255,255,.04)`}}>
-                    <td style={{padding:"10px 12px",fontWeight:600,color:r.color}}>{r.lbl}</td>
-                    <td style={{padding:"10px 12px",fontFamily:"monospace",fontWeight:700,color:r.color,fontSize:15}}>{r.cnt}</td>
-                    <td style={{padding:"10px 12px",fontFamily:"monospace",fontSize:12}}>{fmtRM(r.val)}</td>
-                    <td style={{padding:"10px 12px",minWidth:120}}>
-                      <div style={{display:"flex",alignItems:"center",gap:8}}>
-                        <div style={{flex:1,height:6,background:C.border,borderRadius:3,overflow:"hidden"}}>
-                          <div style={{width:`${cp}%`,height:"100%",background:r.color,borderRadius:3,transition:"width .8s ease"}}/>
-                        </div>
-                        <span style={{fontFamily:"monospace",fontSize:11,color:r.color,minWidth:38}}>{cp}%</span>
-                      </div>
-                    </td>
-                    <td style={{padding:"10px 12px",minWidth:120}}>
-                      <div style={{display:"flex",alignItems:"center",gap:8}}>
-                        <div style={{flex:1,height:6,background:C.border,borderRadius:3,overflow:"hidden"}}>
-                          <div style={{width:`${vp}%`,height:"100%",background:r.color,borderRadius:3,transition:"width .8s ease"}}/>
-                        </div>
-                        <span style={{fontFamily:"monospace",fontSize:11,color:r.color,minWidth:38}}>{vp}%</span>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-              <tr style={{background:C.surface2,borderTop:`1px solid ${C.border2}`}}>
-                <td style={{padding:"10px 12px",fontWeight:700,color:C.accent}}>📋 TOTAL</td>
-                <td style={{padding:"10px 12px",fontFamily:"monospace",fontWeight:800,color:C.accent,fontSize:15}}>{data.totalCount}</td>
-                <td style={{padding:"10px 12px",fontFamily:"monospace",fontWeight:700,color:C.accent}}>{fmtRM(data.totalVal)}</td>
-                <td style={{padding:"10px 12px",fontFamily:"monospace",color:C.text3}}>100%</td>
-                <td style={{padding:"10px 12px",fontFamily:"monospace",color:C.text3}}>100%</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
     </div>
   );
 }
 
-// ── ORDER DETAIL ──────────────────────────────────────────────────────────
-function OrderDetail({ order, st, onStatus, onComment, onSubmit }){
-  const { status, comment, submitted, submitting } = st;
-  const itemsGross = order.items.reduce((s,it)=>s+(+it.gross||0),0);
-  const sst        = order.sstAmount||0;
-  const subTotal   = order.subTotal||(itemsGross+sst);
+// ══════════════════════════════════════════════════════════════════════════
+// USER MANAGEMENT
+// ══════════════════════════════════════════════════════════════════════════
+function UserManagement({ addToast }){
+  const [users,   setUsers]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm,setShowForm]= useState(false);
+  const [editUser,setEditUser]= useState(null);
+  const [form,    setForm]    = useState({ username:"", fullName:"", password:"", canSubmit:true, canEditAfterSet:false, canViewReports:true, canManageUsers:false, isActive:true });
+  const [saving,  setSaving]  = useState(false);
+  const [newPwd,  setNewPwd]  = useState("");
+
+  async function loadUsers(){
+    setLoading(true);
+    try{ const d=await apiFetch("/api/users"); setUsers(d); }
+    catch(err){ addToast("error","Failed",err.message); }
+    finally{ setLoading(false); }
+  }
+
+  useEffect(()=>{ loadUsers(); },[]);
+
+  function openAdd(){ setEditUser(null); setForm({username:"",fullName:"",password:"",canSubmit:true,canEditAfterSet:false,canViewReports:true,canManageUsers:false,isActive:true}); setNewPwd(""); setShowForm(true); }
+  function openEdit(u){ setEditUser(u); setForm({username:u.Username,fullName:u.FullName,password:"",canSubmit:!!u.CanSubmit,canEditAfterSet:!!u.CanEditAfterSet,canViewReports:!!u.CanViewReports,canManageUsers:!!u.CanManageUsers,isActive:!!u.IsActive}); setNewPwd(""); setShowForm(true); }
+
+  async function saveUser(){
+    if(!form.fullName){ addToast("error","Required","Full name is required."); return; }
+    if(!editUser&&!form.password){ addToast("error","Required","Password is required for new user."); return; }
+    setSaving(true);
+    try{
+      if(editUser){
+        await apiFetch(`/api/users/${editUser.ID}`,{method:"PUT",body:JSON.stringify({...form,newPassword:newPwd||undefined})});
+        addToast("success","✅ Saved","User updated successfully.");
+      } else {
+        await apiFetch("/api/users",{method:"POST",body:JSON.stringify({username:form.username,fullName:form.fullName,password:form.password,canSubmit:form.canSubmit,canEditAfterSet:form.canEditAfterSet,canViewReports:form.canViewReports,canManageUsers:form.canManageUsers})});
+        addToast("success","✅ Created","User created successfully.");
+      }
+      setShowForm(false); loadUsers();
+    }catch(err){ addToast("error","❌ Failed",err.message); }
+    finally{ setSaving(false); }
+  }
+
+  const Right = ({label,val,key}) => (
+    <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13}}>
+      <input type="checkbox" checked={val} onChange={e=>setForm(f=>({...f,[key]:e.target.checked}))} style={{width:15,height:15,accentColor:"var(--accent)"}}/>
+      {label}
+    </label>
+  );
 
   return (
-    <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:20,padding:"20px 20px 20px 58px",background:"rgba(0,0,0,.22)",borderTop:`1px solid ${C.border}`,animation:"fadeSlideIn .2s ease"}}>
-      <div>
-        <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Line Items — {order.customer}</div>
-        <div style={{overflowX:"auto"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,minWidth:480}}>
-            <thead>
-              <tr style={{background:C.surface2}}>
-                {["Description","Unit","Qty","Rate (RM)","Gross (RM)"].map((h,i)=>(
-                  <th key={h} style={{padding:"7px 10px",textAlign:i>=2?"right":"left",fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:.8,textTransform:"uppercase",borderBottom:`1px solid ${C.border}`,fontWeight:500,whiteSpace:"nowrap"}}>{h}</th>
+    <div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+        <div style={{fontFamily:"monospace",fontSize:11,color:"var(--text3)"}}>{users.length} user(s) registered</div>
+        <button onClick={openAdd} style={{...btnPrimary,padding:"8px 16px"}}>+ Add User</button>
+      </div>
+
+      {showForm && (
+        <div className="card" style={{padding:24,marginBottom:20,animation:"fadeIn .3s ease"}}>
+          <div style={{fontSize:14,fontWeight:700,marginBottom:16}}>{editUser?"✏️ Edit User":"➕ New User"}</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+            {!editUser&&<div>
+              <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Username</div>
+              <input value={form.username} onChange={e=>setForm(f=>({...f,username:e.target.value}))} placeholder="e.g. john.doe" style={{...inp}}/>
+            </div>}
+            <div>
+              <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Full Name</div>
+              <input value={form.fullName} onChange={e=>setForm(f=>({...f,fullName:e.target.value}))} placeholder="e.g. John Doe" style={{...inp}}/>
+            </div>
+            <div>
+              <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>{editUser?"New Password (leave blank to keep)":"Password"}</div>
+              <input type="password" value={editUser?newPwd:form.password} onChange={e=>editUser?setNewPwd(e.target.value):setForm(f=>({...f,password:e.target.value}))} placeholder="Min. 6 characters" style={{...inp}}/>
+            </div>
+          </div>
+          <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Permissions</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10,marginBottom:16}}>
+            <Right label="Can Submit / Update Status"        val={form.canSubmit}       key="canSubmit"/>
+            <Right label="Can Edit After Status is Set"      val={form.canEditAfterSet} key="canEditAfterSet"/>
+            <Right label="Can View Reports & KPI"            val={form.canViewReports}  key="canViewReports"/>
+            <Right label="Can Manage Users (Admin)"          val={form.canManageUsers}  key="canManageUsers"/>
+            {editUser&&<Right label="Active"                 val={form.isActive}        key="isActive"/>}
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={saveUser} disabled={saving} style={{...btnPrimary,opacity:saving?.7:1}}>{saving?"Saving…":"Save"}</button>
+            <button onClick={()=>setShowForm(false)} style={{padding:"9px 16px",borderRadius:9,background:"var(--surface2)",border:"1px solid var(--border2)",color:"var(--text2)",fontWeight:600,cursor:"pointer"}}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div className="card" style={{overflow:"hidden"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+          <thead>
+            <tr style={{background:"var(--surface2)"}}>
+              {["Full Name","Username","Submit","Edit After","Reports","Admin","Status","Action"].map(h=>(
+                <th key={h} style={{padding:"10px 14px",textAlign:"left",fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:.8,textTransform:"uppercase",borderBottom:"1px solid var(--border)",fontWeight:500}}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {loading?<tr><td colSpan={8} style={{padding:40,textAlign:"center",color:"var(--text3)",fontFamily:"monospace"}}>Loading…</td></tr>
+            :users.map(u=>(
+              <tr key={u.ID} style={{borderBottom:"1px solid var(--border)",opacity:u.IsActive?1:.5}}>
+                <td style={{padding:"10px 14px",fontWeight:600}}>{u.FullName} {u.IsSuperAdmin?<span style={{fontSize:10,color:"var(--accent)",fontFamily:"monospace"}}>[SUPER]</span>:""}</td>
+                <td style={{padding:"10px 14px",fontFamily:"monospace",fontSize:12,color:"var(--text2)"}}>{u.Username}</td>
+                {[u.CanSubmit,u.CanEditAfterSet,u.CanViewReports,u.CanManageUsers].map((v,i)=>(
+                  <td key={i} style={{padding:"10px 14px",textAlign:"center"}}>{v?<span style={{color:"var(--green)"}}>✓</span>:<span style={{color:"var(--text3)"}}>—</span>}</td>
                 ))}
+                <td style={{padding:"10px 14px"}}>
+                  <span style={{fontFamily:"monospace",fontSize:11,fontWeight:600,color:u.IsActive?"var(--green)":"var(--red)",background:u.IsActive?"rgba(34,197,94,.1)":"rgba(239,68,68,.1)",padding:"2px 8px",borderRadius:10}}>
+                    {u.IsActive?"Active":"Inactive"}
+                  </span>
+                </td>
+                <td style={{padding:"10px 14px"}}>
+                  {!u.IsSuperAdmin&&<button onClick={()=>openEdit(u)} style={{padding:"5px 12px",borderRadius:7,background:"var(--surface2)",border:"1px solid var(--border2)",color:"var(--text2)",fontSize:12,cursor:"pointer"}}>Edit</button>}
+                </td>
               </tr>
-            </thead>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ORDER DETAIL PANEL
+// ══════════════════════════════════════════════════════════════════════════
+function OrderDetailPanel({ doc, docType, user, onStatusUpdated, addToast }){
+  const isSO = docType === "SO";
+  const statusMap = isSO ? SO_STATUS : IV_STATUS;
+  const currentStatus = isSO ? (doc.doStatus ?? 0) : (doc.invoiceStatus ?? 0);
+  const isAlreadySet  = currentStatus !== 0 && !(isSO && currentStatus === 0);
+  const canEdit       = isAlreadySet ? user.canEditAfterSet : true;
+
+  const [selStatus, setSelStatus] = useState(null);
+  const [remarks,   setRemarks]   = useState("");
+  const [submitting,setSubmitting]= useState(false);
+  const [remarkErr, setRemarkErr] = useState(false);
+
+  // Available status options
+  const options = isSO
+    ? [{ val:1, label:"✅ Completed", color:"var(--green)" },{ val:2, label:"❌ Cancelled", color:"var(--red)" }]
+    : [{ val:2, label:"❌ Cancelled", color:"var(--red)" }];
+
+  const itemsGross = doc.items.reduce((s,it)=>s+(+it.gross||0),0);
+  const sst        = doc.sstAmount||0;
+  const subTotal   = doc.subTotal||(itemsGross+sst);
+
+  async function handleSubmit(){
+    if(!selStatus){ addToast("warn","⚠️ Select Status","Please select a status."); return; }
+    if(selStatus===2&&!remarks.trim()){ setRemarkErr(true); addToast("warn","⚠️ Remarks Required","Cancellation requires remarks."); return; }
+    setSubmitting(true);
+    try{
+      const url  = isSO ? "/api/sales-orders/status" : "/api/invoices/status";
+      const body = isSO
+        ? { salesOrderNo:doc.id, status:selStatus, remarks:remarks||"NA", isEdit:isAlreadySet }
+        : { invoiceNo:doc.id,    status:selStatus, remarks:remarks.trim(), isEdit:isAlreadySet };
+      await apiFetch(url,{ method:"POST", body:JSON.stringify(body) });
+      addToast("success","✅ Saved",`${doc.id} status updated.`);
+      onStatusUpdated(doc.id, selStatus, remarks);
+    }catch(err){ addToast("error","❌ Failed",err.message); }
+    finally{ setSubmitting(false); }
+  }
+
+  return (
+    <div style={{display:"grid",gridTemplateColumns:"1fr 290px",gap:20,padding:"20px 20px 20px 54px",background:"rgba(0,0,0,.15)",borderTop:"1px solid var(--border)",animation:"fadeIn .2s ease"}}>
+      {/* Items */}
+      <div>
+        <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Line Items — {doc.customer}</div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,minWidth:440}}>
+            <thead><tr style={{background:"var(--surface2)"}}>
+              {["Description","Unit","Qty","Rate (RM)","Gross (RM)"].map((h,i)=>(
+                <th key={h} style={{padding:"7px 10px",textAlign:i>=2?"right":"left",fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:.8,textTransform:"uppercase",borderBottom:"1px solid var(--border)",fontWeight:500,whiteSpace:"nowrap"}}>{h}</th>
+              ))}
+            </tr></thead>
             <tbody>
-              {order.items.map((it,i)=>(
-                <tr key={i} style={{borderBottom:`1px solid rgba(255,255,255,.03)`}}>
-                  <td style={{padding:"9px 10px",color:C.text}}>{it.name}</td>
-                  <td style={{padding:"9px 10px",fontFamily:"monospace",fontSize:12,color:C.text2}}>{it.unit}</td>
+              {doc.items.map((it,i)=>(
+                <tr key={i} style={{borderBottom:"1px solid rgba(128,128,128,.08)"}}>
+                  <td style={{padding:"9px 10px"}}>{it.name}</td>
+                  <td style={{padding:"9px 10px",fontFamily:"monospace",fontSize:12,color:"var(--text2)"}}>{it.unit}</td>
                   <td style={{padding:"9px 10px",fontFamily:"monospace",fontSize:12,textAlign:"right"}}>{(+it.qty).toLocaleString()}</td>
                   <td style={{padding:"9px 10px",fontFamily:"monospace",fontSize:12,textAlign:"right"}}>{(+it.rate).toFixed(2)}</td>
                   <td style={{padding:"9px 10px",fontFamily:"monospace",fontSize:13,fontWeight:600,textAlign:"right"}}>RM {(+it.gross).toFixed(2)}</td>
@@ -389,75 +423,459 @@ function OrderDetail({ order, st, onStatus, onComment, onSubmit }){
               ))}
             </tbody>
             <tfoot>
-              <tr><td colSpan={4} style={{padding:"7px 10px",textAlign:"right",fontFamily:"monospace",fontSize:11,color:C.text3,borderTop:`1px solid ${C.border}`}}>Items Gross</td>
-                  <td style={{padding:"7px 10px",fontFamily:"monospace",textAlign:"right",borderTop:`1px solid ${C.border}`}}>RM {itemsGross.toFixed(2)}</td></tr>
-              <tr><td colSpan={4} style={{padding:"7px 10px",textAlign:"right",fontFamily:"monospace",fontSize:11,color:C.text3}}>SST Amount</td>
-                  <td style={{padding:"7px 10px",fontFamily:"monospace",textAlign:"right"}}>RM {sst.toFixed(2)}</td></tr>
-              <tr><td colSpan={4} style={{padding:"7px 10px",textAlign:"right",fontFamily:"monospace",fontSize:13,color:C.accent,fontWeight:700}}>SUB TOTAL</td>
-                  <td style={{padding:"7px 10px",fontFamily:"monospace",fontSize:14,fontWeight:700,textAlign:"right",color:C.accent}}>RM {subTotal.toFixed(2)}</td></tr>
+              <tr><td colSpan={4} style={{padding:"7px 10px",textAlign:"right",fontFamily:"monospace",fontSize:11,color:"var(--text3)",borderTop:"1px solid var(--border)"}}>Items Gross</td><td style={{padding:"7px 10px",fontFamily:"monospace",textAlign:"right",borderTop:"1px solid var(--border)"}}>RM {itemsGross.toFixed(2)}</td></tr>
+              <tr><td colSpan={4} style={{padding:"7px 10px",textAlign:"right",fontFamily:"monospace",fontSize:11,color:"var(--text3)"}}>SST</td><td style={{padding:"7px 10px",fontFamily:"monospace",textAlign:"right"}}>RM {sst.toFixed(2)}</td></tr>
+              <tr><td colSpan={4} style={{padding:"7px 10px",textAlign:"right",fontFamily:"monospace",fontSize:13,color:"var(--accent)",fontWeight:700}}>SUB TOTAL</td><td style={{padding:"7px 10px",fontFamily:"monospace",fontSize:14,fontWeight:700,textAlign:"right",color:"var(--accent)"}}>RM {subTotal.toFixed(2)}</td></tr>
             </tfoot>
           </table>
         </div>
-        <div style={{marginTop:10,padding:"9px 12px",background:"rgba(255,255,255,.02)",borderRadius:8,border:`1px solid ${C.border}`}}>
-          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:.8,marginBottom:3}}>SHIP TO</div>
-          <div style={{fontSize:13,color:C.text2}}>{order.address||"—"}</div>
-        </div>
+        {doc.address&&<div style={{marginTop:10,padding:"9px 12px",background:"var(--surface2)",borderRadius:8,border:"1px solid var(--border)"}}>
+          <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",marginBottom:3}}>SHIP TO / BILL TO</div>
+          <div style={{fontSize:13,color:"var(--text2)"}}>{doc.address}</div>
+        </div>}
       </div>
-      <div style={{background:C.surface2,border:`1px solid ${C.border2}`,borderRadius:14,padding:18,display:"flex",flexDirection:"column",gap:14,alignSelf:"start",position:"sticky",top:16}}>
+
+      {/* Status Panel */}
+      <div style={{background:"var(--surface2)",border:"1px solid var(--border2)",borderRadius:14,padding:18,display:"flex",flexDirection:"column",gap:14,alignSelf:"start",position:"sticky",top:16}}>
         <div>
-          <div style={{fontSize:13,fontWeight:700}}>🚚 Delivery Status Update</div>
-          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,marginTop:2}}>POD — {order.id}</div>
+          <div style={{fontSize:13,fontWeight:700}}>{isSO?"🚚 Delivery Status":"🧾 Invoice Status"}</div>
+          <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",marginTop:2}}>{doc.id}</div>
         </div>
-        <div style={{display:"flex",flexDirection:"column",gap:7}}>
-          {Object.entries(STATUS_CFG).map(([key,cfg])=>{
-            const sel=status===key;
-            return <div key={key} onClick={()=>!submitted&&onStatus(key)}
-              style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:9,border:`1px solid ${sel?cfg.color:C.border}`,background:sel?cfg.bg:"transparent",cursor:submitted?"not-allowed":"pointer",opacity:submitted?.65:1,transition:"all .15s",userSelect:"none"}}>
-              <div style={{width:15,height:15,borderRadius:"50%",border:`2px solid ${sel?cfg.color:C.border2}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                {sel&&<div style={{width:6,height:6,borderRadius:"50%",background:cfg.color}}/>}
+
+        {/* Current status */}
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"var(--surface)",borderRadius:9,border:"1px solid var(--border)"}}>
+          <span style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)"}}>CURRENT:</span>
+          <StatusBadge statusMap={statusMap} value={currentStatus}/>
+        </div>
+
+        {/* Options */}
+        {canEdit ? (
+          <>
+            <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:.8,textTransform:"uppercase"}}>Update Status</div>
+            <div style={{display:"flex",flexDirection:"column",gap:7}}>
+              {options.map(opt=>{
+                const sel=selStatus===opt.val;
+                return <div key={opt.val} onClick={()=>setSelStatus(opt.val)}
+                  style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderRadius:9,border:`1px solid ${sel?opt.color:"var(--border)"}`,background:sel?`${opt.color}15`:"transparent",cursor:"pointer",transition:"all .15s",userSelect:"none"}}>
+                  <div style={{width:15,height:15,borderRadius:"50%",border:`2px solid ${sel?opt.color:"var(--border2)"}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    {sel&&<div style={{width:6,height:6,borderRadius:"50%",background:opt.color}}/>}
+                  </div>
+                  <span style={{fontSize:13,fontWeight:600,color:sel?opt.color:"var(--text)"}}>{opt.label}</span>
+                </div>;
+              })}
+            </div>
+            <div>
+              <div style={{fontFamily:"monospace",fontSize:10,color:remarkErr?"var(--red)":"var(--text3)",letterSpacing:.8,textTransform:"uppercase",marginBottom:5}}>
+                Remarks {selStatus===2&&<span style={{color:"var(--red)"}}>* Required</span>}
               </div>
-              <div>
-                <div style={{fontSize:13,fontWeight:600}}>{cfg.icon} {cfg.label}</div>
-                <div style={{fontSize:11,color:C.text3}}>{cfg.desc}</div>
-              </div>
-            </div>;
-          })}
-        </div>
-        <div>
-          <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:.8,marginBottom:5}}>REMARKS / NOTES</div>
-          <textarea value={comment} onChange={e=>!submitted&&onComment(e.target.value)} disabled={submitted}
-            placeholder="e.g. Received by John at 2:30pm..." rows={3}
-            style={{background:C.bg,border:`1px solid ${C.border}`,color:C.text,fontFamily:"monospace",fontSize:12,padding:"9px 11px",borderRadius:8,width:"100%",resize:"none",outline:"none",lineHeight:1.5,opacity:submitted?.6:1}}/>
-        </div>
-        <button disabled={!status||submitted||submitting} onClick={onSubmit}
-          style={{width:"100%",padding:11,borderRadius:9,fontWeight:700,fontSize:14,
-            cursor:(!status||submitted||submitting)?"not-allowed":"pointer",
-            border:submitted?`1px solid ${C.green}`:"none",
-            background:submitted?"rgba(34,197,94,.1)":submitting?C.surface:!status?C.surface:"linear-gradient(135deg,#4f8ef7,#7c5cfc)",
-            color:submitted?C.green:(!status||submitting)?C.text3:"#fff",
-            boxShadow:(status&&!submitted&&!submitting)?"0 4px 14px rgba(79,142,247,.28)":"none",
-            transition:"all .2s"}}>
-          {submitted?"✅ Submitted":submitting?"⌛ Submitting…":status?"↑ Submit POD Update":"Select a Status First"}
-        </button>
-        {submitted&&<div style={{textAlign:"center",fontFamily:"monospace",fontSize:10,color:C.green,marginTop:-8}}>Saved to database ✓</div>}
+              <textarea value={remarks} onChange={e=>{setRemarks(e.target.value);setRemarkErr(false);}} rows={3}
+                placeholder={selStatus===2?"Mandatory for cancellation…":"Optional notes…"}
+                style={{...inp,width:"100%",resize:"none",lineHeight:1.5,border:`1px solid ${remarkErr?"var(--red)":"var(--border)"}`}}/>
+            </div>
+            <button disabled={!selStatus||submitting} onClick={handleSubmit}
+              style={{width:"100%",padding:11,borderRadius:9,fontWeight:700,fontSize:14,cursor:(!selStatus||submitting)?"not-allowed":"pointer",
+                border:"none",background:(!selStatus||submitting)?"var(--surface)":"linear-gradient(135deg,#4f8ef7,#7c5cfc)",
+                color:(!selStatus||submitting)?"var(--text3)":"#fff",
+                boxShadow:selStatus&&!submitting?"0 4px 14px rgba(79,142,247,.28)":"none",transition:"all .2s"}}>
+              {submitting?"⌛ Saving…":selStatus?"↑ Submit Update":"Select a Status"}
+            </button>
+          </>
+        ) : (
+          <div style={{padding:"12px 14px",background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.2)",borderRadius:9,fontFamily:"monospace",fontSize:12,color:"var(--red)"}}>
+            🔒 No permission to edit after status is set.
+          </div>
+        )}
+
+        {isAlreadySet && doc.cancellationRemarks && doc.cancellationRemarks !== "NA" && (
+          <div style={{padding:"10px 12px",background:"var(--surface)",borderRadius:9,border:"1px solid var(--border)"}}>
+            <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",marginBottom:3}}>SAVED REMARKS</div>
+            <div style={{fontSize:12,color:"var(--text2)"}}>{doc.cancellationRemarks}</div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-// ── MAIN APP ──────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// ORDER LIST (SO or Invoice)
+// ══════════════════════════════════════════════════════════════════════════
+function OrderList({ docType, user, addToast }){
+  const isSO  = docType==="SO";
+  const [dateFrom,   setDateFrom]  = useState(fom);
+  const [dateTo,     setDateTo]    = useState(today);
+  const [custFilter, setCustFilter]= useState("");
+  const [docs,       setDocs]      = useState([]);
+  const [loading,    setLoading]   = useState(false);
+  const [loaded,     setLoaded]    = useState(false);
+  const [error,      setError]     = useState("");
+  const [expanded,   setExpanded]  = useState({});
+  const [selected,   setSelected]  = useState({});
+  const [bulkLoading,setBulkLoading]=useState(false);
+  const statusMap = isSO ? SO_STATUS : IV_STATUS;
+
+  async function loadDocs(){
+    if(!dateFrom||!dateTo){ addToast("warn","⚠️ Required","Select both dates."); return; }
+    if(dateFrom>dateTo){ addToast("warn","⚠️ Invalid","From must be before To."); return; }
+    setLoading(true); setLoaded(false); setError(""); setExpanded({}); setSelected({}); setDocs([]);
+    try{
+      const url = isSO ? `/api/sales-orders?from=${dateFrom}&to=${dateTo}&customer=${encodeURIComponent(custFilter)}`
+                       : `/api/invoices?from=${dateFrom}&to=${dateTo}&customer=${encodeURIComponent(custFilter)}`;
+      const data = await apiFetch(url);
+      setDocs(data); setLoaded(true);
+      addToast("success","✅ Loaded",`${data.length} ${isSO?"order":"invoice"}(s) retrieved.`);
+    }catch(err){ setError(err.message); addToast("error","❌ Failed",err.message); }
+    finally{ setLoading(false); }
+  }
+
+  function handleStatusUpdated(id, status, remarks){
+    setDocs(d=>d.map(x=>x.id===id ? {...x, [isSO?"doStatus":"invoiceStatus"]:status, cancellationRemarks:remarks} : x));
+    setExpanded(e=>({...e,[id]:false}));
+  }
+
+  const allIds     = docs.map(d=>d.id);
+  const allChecked = allIds.length>0 && allIds.every(id=>selected[id]);
+  const anyChecked = allIds.some(id=>selected[id]);
+  const selectedIds= allIds.filter(id=>selected[id]);
+
+  function toggleAll(){ const v=!allChecked; const s={}; allIds.forEach(id=>s[id]=v); setSelected(s); }
+  function toggleOne(id){ setSelected(s=>({...s,[id]:!s[id]})); }
+
+  async function bulkComplete(){
+    if(!selectedIds.length){ addToast("warn","⚠️","Select at least one order."); return; }
+    if(!window.confirm(`Mark ${selectedIds.length} order(s) as Completed?`)) return;
+    setBulkLoading(true);
+    try{
+      const res = await apiFetch("/api/sales-orders/bulk-complete",{ method:"POST", body:JSON.stringify({salesOrderNos:selectedIds}) });
+      res.success.forEach(id=>{ setDocs(d=>d.map(x=>x.id===id?{...x,doStatus:1}:x)); });
+      addToast("success","✅ Bulk Complete",`${res.success.length} completed, ${res.failed.length} failed.`);
+      setSelected({});
+    }catch(err){ addToast("error","❌ Failed",err.message); }
+    finally{ setBulkLoading(false); }
+  }
+
+  const stats = useMemo(()=>{
+    const s={total:docs.length,pending:0,completed:0,cancelled:0};
+    docs.forEach(d=>{
+      const v = isSO ? (d.doStatus??0) : (d.invoiceStatus??0);
+      if(v===0)      s.pending++;
+      else if(v===1) s.completed++;
+      else if(v===2) s.cancelled++;
+    });
+    return s;
+  },[docs]);
+
+  const colsGrid = isSO
+    ? "28px 30px 150px 100px 1fr 120px 70px 160px"
+    : "28px 150px 100px 1fr 120px 70px 160px";
+
+  const headers = isSO
+    ? ["","","ORDER NO.","DATE","CUSTOMER","GROSS (RM)","ITEMS","STATUS"]
+    : ["","INV NO.","DATE","CUSTOMER","GROSS (RM)","ITEMS","STATUS"];
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      {/* Filter */}
+      <div className="card" style={{padding:"16px 20px",display:"flex",alignItems:"flex-end",gap:14,flexWrap:"wrap"}}>
+        {[["From",dateFrom,setDateFrom],["To",dateTo,setDateTo]].map(([lbl,val,set])=>(
+          <div key={lbl} style={{display:"flex",flexDirection:"column",gap:5}}>
+            <span style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase"}}>{lbl} Date</span>
+            <input type="date" value={val} onChange={e=>set(e.target.value)} style={{...inp,minWidth:145,width:"auto",cursor:"pointer"}}/>
+          </div>
+        ))}
+        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+          <span style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase"}}>Customer</span>
+          <input value={custFilter} onChange={e=>setCustFilter(e.target.value)} placeholder="Filter by customer…"
+            onKeyDown={e=>e.key==="Enter"&&loadDocs()} style={{...inp,minWidth:190,width:"auto"}}/>
+        </div>
+        <div style={{display:"flex",gap:9,marginLeft:"auto",alignItems:"center"}}>
+          {isSO&&anyChecked&&user.canSubmit&&(
+            <button onClick={bulkComplete} disabled={bulkLoading}
+              style={{...btnPrimary,background:"linear-gradient(135deg,#22c55e,#16a34a)",padding:"8px 16px",opacity:bulkLoading?.7:1}}>
+              {bulkLoading?"⌛ Processing…":`✅ Complete (${selectedIds.length})`}
+            </button>
+          )}
+          <button onClick={()=>{setDateFrom(fom);setDateTo(today);setCustFilter("");}}
+            style={{padding:"8px 14px",borderRadius:8,background:"var(--surface2)",border:"1px solid var(--border2)",color:"var(--text2)",fontWeight:600,fontSize:13,cursor:"pointer"}}>↺</button>
+          <button onClick={loadDocs} disabled={loading} style={{...btnPrimary,padding:"8px 20px",opacity:loading?.7:1}}>
+            {loading?"⌛ Loading…":"⚡ Load"}
+          </button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+        {[
+          ["total","📋","var(--accent)","TOTAL"],
+          ["pending","⏳","var(--orange)",isSO?"PENDING":"ACTIVE"],
+          ["completed","✅","var(--green)","COMPLETED"],
+          ["cancelled","❌","var(--red)","CANCELLED"],
+        ].map(([k,ico,clr,lbl])=>(
+          <div key={k} className="card" style={{padding:"13px 16px",display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:34,height:34,borderRadius:8,background:`${clr.replace("var(","").replace(")","")}_bg`,display:"grid",placeItems:"center",fontSize:16,flexShrink:0,background:`${clr}22`}}>{ico}</div>
+            <div>
+              <div style={{fontSize:22,fontWeight:800,letterSpacing:-1,color:k==="total"?"var(--text)":clr}}>{loaded?stats[k]:"—"}</div>
+              <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",marginTop:1}}>{lbl}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div className="card" style={{overflow:"hidden"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 18px",borderBottom:"1px solid var(--border)"}}>
+          <div style={{fontFamily:"monospace",fontSize:12,color:"var(--text2)"}}>
+            {error?<span style={{color:"var(--red)"}}>⚠️ {error}</span>
+              :loaded?<span>Found <strong style={{color:"var(--accent)"}}>{docs.length}</strong> · {dateFrom} → {dateTo}</span>
+              :`Select date range and click ⚡ Load`}
+          </div>
+          <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)"}}>↕ Click row to expand</div>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:colsGrid,padding:"8px 18px",background:"var(--surface2)",borderBottom:"1px solid var(--border)"}}>
+          {headers.map((h,i)=>(
+            <div key={i} style={{padding:"0 7px",fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:.8,textTransform:"uppercase",textAlign:i>=(isSO?4:3)?"center":"left"}}>
+              {i===1&&isSO
+                ? <input type="checkbox" checked={allChecked} onChange={toggleAll} style={{width:14,height:14,accentColor:"var(--accent)",cursor:"pointer"}}/>
+                : h}
+            </div>
+          ))}
+        </div>
+
+        {loading?(
+          <div style={{padding:50,textAlign:"center",fontFamily:"monospace",fontSize:13,color:"var(--text3)"}}>
+            <span style={{display:"inline-block",width:16,height:16,border:"2px solid var(--border)",borderTopColor:"var(--accent)",borderRadius:"50%",animation:"spin .7s linear infinite",marginRight:8,verticalAlign:"middle"}}/>
+            Querying SQL Server…
+          </div>
+        ):!loaded&&!error?(
+          <div style={{padding:50,textAlign:"center"}}>
+            <div style={{fontSize:32,opacity:.2}}>🗂️</div>
+            <div style={{fontFamily:"monospace",fontSize:12,color:"var(--text3)",marginTop:8}}>No data loaded yet.</div>
+          </div>
+        ):error?(
+          <div style={{padding:40,textAlign:"center"}}>
+            <div style={{fontSize:30,opacity:.3}}>⚠️</div>
+            <div style={{fontFamily:"monospace",fontSize:13,color:"var(--red)",marginTop:8}}>{error}</div>
+          </div>
+        ):docs.length===0?(
+          <div style={{padding:50,textAlign:"center"}}>
+            <div style={{fontSize:32,opacity:.2}}>🔍</div>
+            <div style={{fontFamily:"monospace",fontSize:12,color:"var(--text3)",marginTop:8}}>No records found.</div>
+          </div>
+        ):docs.map(doc=>{
+          const gross    = doc.items.reduce((s,it)=>s+(+it.gross||0),0);
+          const open     = !!expanded[doc.id];
+          const statusV  = isSO ? (doc.doStatus??0) : (doc.invoiceStatus??0);
+          const isSel    = !!selected[doc.id];
+          return (
+            <div key={doc.id} style={{borderBottom:"1px solid var(--border)"}}>
+              <div style={{display:"grid",gridTemplateColumns:colsGrid,padding:"0 18px",minHeight:50,alignItems:"center",cursor:"pointer",background:open?"rgba(79,142,247,.04)":isSel?"rgba(79,142,247,.02)":"transparent",transition:"background .12s"}}>
+                <div style={{padding:"0 7px"}} onClick={e=>e.stopPropagation()}>
+                  <div style={{width:18,height:18,borderRadius:5,background:open?"rgba(79,142,247,.12)":"var(--surface2)",border:`1px solid ${open?"var(--accent)":"var(--border)"}`,display:"grid",placeItems:"center",fontSize:11,color:open?"var(--accent)":"var(--text3)",transform:open?"rotate(90deg)":"none",transition:"all .2s",cursor:"pointer"}} onClick={()=>setExpanded(e=>({...e,[doc.id]:!e[doc.id]}))}>›</div>
+                </div>
+                {isSO&&<div style={{padding:"0 7px"}} onClick={e=>e.stopPropagation()}>
+                  <input type="checkbox" checked={isSel} onChange={()=>toggleOne(doc.id)} style={{width:14,height:14,accentColor:"var(--accent)",cursor:"pointer"}}/>
+                </div>}
+                <div onClick={()=>setExpanded(e=>({...e,[doc.id]:!e[doc.id]}))} style={{padding:"0 7px",fontFamily:"monospace",fontSize:12,color:"var(--accent)",fontWeight:500}}>{doc.id}</div>
+                <div onClick={()=>setExpanded(e=>({...e,[doc.id]:!e[doc.id]}))} style={{padding:"0 7px",fontFamily:"monospace",fontSize:12,color:"var(--text2)"}}>{doc.date}</div>
+                <div onClick={()=>setExpanded(e=>({...e,[doc.id]:!e[doc.id]}))} style={{padding:"0 7px",fontSize:13,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{doc.customer}</div>
+                <div onClick={()=>setExpanded(e=>({...e,[doc.id]:!e[doc.id]}))} style={{padding:"0 7px",fontFamily:"monospace",fontSize:13,fontWeight:600,textAlign:"center"}}>RM {gross.toFixed(2)}</div>
+                <div onClick={()=>setExpanded(e=>({...e,[doc.id]:!e[doc.id]}))} style={{padding:"0 7px",fontFamily:"monospace",fontSize:12,color:"var(--text2)",textAlign:"center"}}>{doc.items.length}</div>
+                <div onClick={()=>setExpanded(e=>({...e,[doc.id]:!e[doc.id]}))} style={{padding:"0 7px",textAlign:"center"}}><StatusBadge statusMap={statusMap} value={statusV}/></div>
+              </div>
+              {open&&<OrderDetailPanel doc={doc} docType={docType} user={user} onStatusUpdated={handleStatusUpdated} addToast={addToast}/>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// KPI PAGE
+// ══════════════════════════════════════════════════════════════════════════
+function KPIPage({ docType, addToast }){
+  const isSO = docType==="SO";
+  const [from, setFrom] = useState(last7);
+  const [to,   setTo]   = useState(today);
+  const [data, setData] = useState(null);
+  const [loading,setLoading]=useState(false);
+
+  async function loadKPI(){
+    setLoading(true);
+    try{
+      const d = await apiFetch(`/api/kpi/${isSO?"so":"invoices"}?from=${from}&to=${to}`);
+      setData(d);
+    }catch(err){ addToast("error","❌ KPI Failed",err.message); }
+    finally{ setLoading(false); }
+  }
+
+  useEffect(()=>{ loadKPI(); },[]);
+
+  const card = { background:"var(--surface)", border:"1px solid var(--border)", borderRadius:14, padding:"20px 24px" };
+
+  const countBars = data ? (isSO
+    ? [{label:"Total",value:data.totalCount,color:"var(--accent)"},{label:"Completed",value:data.completedCount,color:"var(--green)"},{label:"Pending",value:data.pendingCount,color:"var(--orange)"},{label:"Cancelled",value:data.cancelledCount,color:"var(--red)"}]
+    : [{label:"Total",value:data.totalCount,color:"var(--accent)"},{label:"Active",value:data.activeCount,color:"var(--green)"},{label:"Cancelled",value:data.cancelledCount,color:"var(--red)"}]
+  ) : [];
+
+  const valueBars = data ? (isSO
+    ? [{label:"Total",value:data.totalValue,color:"var(--accent)"},{label:"Completed",value:data.completedValue,color:"var(--green)"},{label:"Pending",value:data.pendingValue,color:"var(--orange)"},{label:"Cancelled",value:data.cancelledValue,color:"var(--red)"}]
+    : [{label:"Total",value:data.totalValue,color:"var(--accent)"},{label:"Active",value:data.activeValue,color:"var(--green)"},{label:"Cancelled",value:data.cancelledValue,color:"var(--red)"}]
+  ) : [];
+
+  const donutSlices = data ? (isSO
+    ? [{label:"Completed",value:data.completedCount,color:"var(--green)"},{label:"Pending",value:data.pendingCount,color:"var(--orange)"},{label:"Cancelled",value:data.cancelledCount,color:"var(--red)"}].filter(x=>x.value>0)
+    : [{label:"Active",value:data.activeCount,color:"var(--green)"},{label:"Cancelled",value:data.cancelledCount,color:"var(--red)"}].filter(x=>x.value>0)
+  ) : [];
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      {/* Date filter */}
+      <div className="card" style={{padding:"14px 20px",display:"flex",alignItems:"flex-end",gap:14,flexWrap:"wrap"}}>
+        {[["From",from,setFrom],["To",to,setTo]].map(([lbl,val,set])=>(
+          <div key={lbl} style={{display:"flex",flexDirection:"column",gap:5}}>
+            <span style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase"}}>{lbl}</span>
+            <input type="date" value={val} onChange={e=>set(e.target.value)} style={{...inp,minWidth:145,width:"auto",cursor:"pointer"}}/>
+          </div>
+        ))}
+        <button onClick={loadKPI} disabled={loading} style={{...btnPrimary,padding:"8px 20px",opacity:loading?.7:1,marginTop:18}}>
+          {loading?"⌛ Loading…":"🔄 Refresh"}
+        </button>
+        {data&&<div style={{marginLeft:"auto",fontFamily:"monospace",fontSize:11,color:"var(--text3)",marginTop:18}}>
+          Period: <span style={{color:"var(--text2)"}}>{from} → {to}</span>
+        </div>}
+      </div>
+
+      {loading&&<div style={{padding:50,textAlign:"center",fontFamily:"monospace",fontSize:13,color:"var(--text3)"}}>
+        <span style={{display:"inline-block",width:16,height:16,border:"2px solid var(--border)",borderTopColor:"var(--accent)",borderRadius:"50%",animation:"spin .7s linear infinite",marginRight:8,verticalAlign:"middle"}}/>
+        Loading KPI data…
+      </div>}
+
+      {data&&!loading&&<>
+        {/* KPI Rings */}
+        <div style={card}>
+          <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:20}}>📈 Key Performance Indicators</div>
+          <div style={{display:"grid",gridTemplateColumns:`repeat(${isSO?3:2},1fr)`,gap:20}}>
+            {isSO?<>
+              <KPIRing pct={data.completionRate}   color="var(--green)"   label="Completion Rate"    sub={`${data.completedCount} of ${data.totalCount} orders completed`}/>
+              <KPIRing pct={data.cancellationRate} color="var(--red)"     label="Cancellation Rate"  sub={`${data.cancelledCount} of ${data.totalCount} orders cancelled`}/>
+              <KPIRing pct={data.totalCount>0?(data.completedCount/data.totalCount*100):0} color="var(--accent2)" label="Delivery Rate" sub={fmtRM(data.completedValue)+" delivered"}/>
+            </>:<>
+              <KPIRing pct={data.activeRate}        color="var(--green)"  label="Active Rate"       sub={`${data.activeCount} of ${data.totalCount} invoices active`}/>
+              <KPIRing pct={data.cancellationRate}  color="var(--red)"    label="Cancellation Rate" sub={`${data.cancelledCount} of ${data.totalCount} invoices cancelled`}/>
+            </>}
+          </div>
+        </div>
+
+        {/* Summary Cards */}
+        <div style={{display:"grid",gridTemplateColumns:`repeat(${isSO?4:3},1fr)`,gap:12}}>
+          {(isSO?[
+            {lbl:"Total Orders",cnt:data.totalCount,val:data.totalValue,color:"var(--accent)",icon:"📋"},
+            {lbl:"Completed",cnt:data.completedCount,val:data.completedValue,color:"var(--green)",icon:"✅"},
+            {lbl:"Pending",cnt:data.pendingCount,val:data.pendingValue,color:"var(--orange)",icon:"⏳"},
+            {lbl:"Cancelled",cnt:data.cancelledCount,val:data.cancelledValue,color:"var(--red)",icon:"❌"},
+          ]:[
+            {lbl:"Total Invoices",cnt:data.totalCount,val:data.totalValue,color:"var(--accent)",icon:"🧾"},
+            {lbl:"Active",cnt:data.activeCount,val:data.activeValue,color:"var(--green)",icon:"✅"},
+            {lbl:"Cancelled",cnt:data.cancelledCount,val:data.cancelledValue,color:"var(--red)",icon:"❌"},
+          ]).map(c=>(
+            <div key={c.lbl} className="card" style={{padding:"15px 17px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                <div style={{width:32,height:32,borderRadius:8,background:`${c.color}22`,display:"grid",placeItems:"center",fontSize:14,flexShrink:0}}>{c.icon}</div>
+                <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",textTransform:"uppercase",letterSpacing:.8}}>{c.lbl}</div>
+              </div>
+              <div style={{fontSize:26,fontWeight:800,letterSpacing:-1,color:c.color,lineHeight:1}}>{c.cnt}</div>
+              <div style={{fontFamily:"monospace",fontSize:11,color:"var(--text2)",marginTop:5}}>{fmtRM(c.val)}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Charts */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+          <div style={card}>
+            <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>📦 Count Breakdown</div>
+            <BarChartSimple bars={countBars} isValue={false}/>
+          </div>
+          <div style={card}>
+            <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>💰 Value Breakdown (RM)</div>
+            <BarChartSimple bars={valueBars} isValue={true}/>
+          </div>
+        </div>
+
+        {/* Donut + Table */}
+        <div style={{display:"grid",gridTemplateColumns:"300px 1fr",gap:16}}>
+          <div style={card}>
+            <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:14}}>🥧 Distribution</div>
+            <DonutChart slices={donutSlices}/>
+          </div>
+          <div style={card}>
+            <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:14}}>🎯 Performance Table</div>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <thead><tr style={{background:"var(--surface2)"}}>
+                {["Status","Count","Value (RM)","% Count","% Value"].map(h=>(
+                  <th key={h} style={{padding:"8px 12px",textAlign:"left",fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:.8,textTransform:"uppercase",borderBottom:"1px solid var(--border)",fontWeight:500}}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {(isSO?[
+                  {lbl:"✅ Completed",cnt:data.completedCount,val:data.completedValue,color:"var(--green)"},
+                  {lbl:"⏳ Pending",  cnt:data.pendingCount,  val:data.pendingValue,  color:"var(--orange)"},
+                  {lbl:"❌ Cancelled",cnt:data.cancelledCount,val:data.cancelledValue,color:"var(--red)"},
+                ]:[
+                  {lbl:"✅ Active",   cnt:data.activeCount,   val:data.activeValue,   color:"var(--green)"},
+                  {lbl:"❌ Cancelled",cnt:data.cancelledCount,val:data.cancelledValue,color:"var(--red)"},
+                ]).map((r,i)=>{
+                  const cp=data.totalCount>0?(r.cnt/data.totalCount*100).toFixed(1):0;
+                  const vp=data.totalValue>0?(r.val/data.totalValue*100).toFixed(1):0;
+                  return <tr key={i} style={{borderBottom:"1px solid rgba(128,128,128,.07)"}}>
+                    <td style={{padding:"9px 12px",fontWeight:600,color:r.color}}>{r.lbl}</td>
+                    <td style={{padding:"9px 12px",fontFamily:"monospace",fontWeight:700,color:r.color,fontSize:15}}>{r.cnt}</td>
+                    <td style={{padding:"9px 12px",fontFamily:"monospace",fontSize:12}}>{fmtRM(r.val)}</td>
+                    <td style={{padding:"9px 12px",minWidth:110}}>
+                      <div style={{display:"flex",alignItems:"center",gap:7}}>
+                        <div style={{flex:1,height:5,background:"var(--border)",borderRadius:3,overflow:"hidden"}}><div style={{width:`${cp}%`,height:"100%",background:r.color,borderRadius:3,transition:"width .8s"}}/></div>
+                        <span style={{fontFamily:"monospace",fontSize:11,color:r.color,minWidth:36}}>{cp}%</span>
+                      </div>
+                    </td>
+                    <td style={{padding:"9px 12px",minWidth:110}}>
+                      <div style={{display:"flex",alignItems:"center",gap:7}}>
+                        <div style={{flex:1,height:5,background:"var(--border)",borderRadius:3,overflow:"hidden"}}><div style={{width:`${vp}%`,height:"100%",background:r.color,borderRadius:3,transition:"width .8s"}}/></div>
+                        <span style={{fontFamily:"monospace",fontSize:11,color:r.color,minWidth:36}}>{vp}%</span>
+                      </div>
+                    </td>
+                  </tr>;
+                })}
+                <tr style={{background:"var(--surface2)",borderTop:"1px solid var(--border2)"}}>
+                  <td style={{padding:"9px 12px",fontWeight:700,color:"var(--accent)"}}>📋 TOTAL</td>
+                  <td style={{padding:"9px 12px",fontFamily:"monospace",fontWeight:800,color:"var(--accent)",fontSize:15}}>{data.totalCount}</td>
+                  <td style={{padding:"9px 12px",fontFamily:"monospace",fontWeight:700,color:"var(--accent)"}}>{fmtRM(data.totalValue)}</td>
+                  <td style={{padding:"9px 12px",fontFamily:"monospace",color:"var(--text3)"}}>100%</td>
+                  <td style={{padding:"9px 12px",fontFamily:"monospace",color:"var(--text3)"}}>100%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </>}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// MAIN APP
+// ══════════════════════════════════════════════════════════════════════════
 function App(){
-  const [activeTab,  setActiveTab]  = useState("orders");
-  const [dateFrom,   setDateFrom]   = useState(fom);
-  const [dateTo,     setDateTo]     = useState(today);
-  const [custFilter, setCustFilter] = useState("");
-  const [orders,     setOrders]     = useState([]);
-  const [loading,    setLoading]    = useState(false);
-  const [loaded,     setLoaded]     = useState(false);
-  const [error,      setError]      = useState("");
-  const [expanded,   setExpanded]   = useState({});
-  const [pod,        setPod]        = useState({});
-  const [toasts,     setToasts]     = useState([]);
+  const [darkMode, setDarkMode] = useState(()=>localStorage.getItem("pod_theme")!=="light");
+  const [user,     setUser]     = useState(()=>getUser());
+  const [tab,      setTab]      = useState("so");
+  const [toasts,   setToasts]   = useState([]);
+
+  useEffect(()=>{
+    document.body.className = darkMode ? "" : "light";
+    localStorage.setItem("pod_theme", darkMode?"dark":"light");
+  },[darkMode]);
 
   function addToast(type,title,msg){
     const id=Date.now();
@@ -465,179 +883,70 @@ function App(){
     setTimeout(()=>setToasts(t=>t.filter(x=>x.id!==id)),3500);
   }
 
-  async function loadOrders(){
-    if(!dateFrom||!dateTo){addToast("error","⚠️ Required","Select both dates.");return;}
-    if(dateFrom>dateTo){addToast("error","⚠️ Invalid","From must be before To.");return;}
-    setLoading(true);setLoaded(false);setError("");setExpanded({});setOrders([]);
-    try{
-      const res=await fetch(`${API_BASE}/api/sales-orders?from=${dateFrom}&to=${dateTo}&customer=${encodeURIComponent(custFilter)}`);
-      if(!res.ok){const e=await res.json();throw new Error(e.error||`HTTP ${res.status}`);}
-      const data=await res.json();
-      setOrders(data);
-      const s={};
-      data.forEach(o=>{s[o.id]=pod[o.id]||{status:null,comment:"",submitted:false,submitting:false};});
-      setPod(s);setLoaded(true);
-      addToast("success","✅ Orders Loaded",`${data.length} order(s) retrieved.`);
-    }catch(err){setError(err.message);addToast("error","❌ Load Failed",err.message);}
-    finally{setLoading(false);}
-  }
+  function handleLogin(u){ setUser(u); }
+  function handleLogout(){ clearAuth(); setUser(null); }
 
-  async function submitPOD(id){
-    const st=pod[id];
-    if(!st?.status||st.submitted)return;
-    setPod(p=>({...p,[id]:{...p[id],submitting:true}}));
-    try{
-      const res=await fetch(`${API_BASE}/api/delivery-status`,{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({salesOrderNo:id,deliveryStatus:st.status,remarks:st.comment||"",updatedBy:"POD_USER"})});
-      if(!res.ok){const e=await res.json();throw new Error(e.error||`HTTP ${res.status}`);}
-      setPod(p=>({...p,[id]:{...p[id],submitting:false,submitted:true}}));
-      addToast("success","✅ POD Saved",`${id} marked as ${st.status}.`);
-    }catch(err){
-      setPod(p=>({...p,[id]:{...p[id],submitting:false}}));
-      addToast("error","❌ Failed",err.message);
-    }
-  }
+  if(!user) return <>
+    <LoginPage onLogin={handleLogin} darkMode={darkMode} toggleDark={()=>setDarkMode(d=>!d)}/>
+    <Toasts list={toasts}/>
+  </>;
 
-  const stats=useMemo(()=>{
-    const s={total:orders.length,completed:0,pending:0,cancelled:0};
-    orders.forEach(o=>{const v=pod[o.id]?.status;if(v)s[v]++;});
-    return s;
-  },[orders,pod]);
+  const tabs = [
+    { key:"so",      label:"📋 Sales Orders",  show:true },
+    { key:"iv",      label:"🧾 Invoices",       show:true },
+    { key:"so_kpi",  label:"📊 SO KPI",         show:user.canViewReports },
+    { key:"iv_kpi",  label:"📈 Invoice KPI",    show:user.canViewReports },
+    { key:"users",   label:"👥 User Management",show:user.canManageUsers },
+  ].filter(t=>t.show);
 
-  const inp={background:C.surface2,border:`1px solid ${C.border2}`,color:C.text,fontFamily:"monospace",fontSize:13,padding:"8px 11px",borderRadius:8,outline:"none"};
-  const tab=(a)=>({padding:"9px 20px",borderRadius:9,fontWeight:700,fontSize:13,cursor:"pointer",border:"none",background:a?"linear-gradient(135deg,#4f8ef7,#7c5cfc)":C.surface2,color:a?"#fff":C.text2,boxShadow:a?"0 4px 14px rgba(79,142,247,.25)":"none",transition:"all .2s"});
+  const tabStyle = (active) => ({
+    padding:"8px 16px", borderRadius:8, fontWeight:700, fontSize:13, cursor:"pointer", border:"none",
+    background: active ? "linear-gradient(135deg,#4f8ef7,#7c5cfc)" : "var(--surface2)",
+    color: active ? "#fff" : "var(--text2)",
+    boxShadow: active ? "0 4px 14px rgba(79,142,247,.22)" : "none",
+    transition:"all .2s", whiteSpace:"nowrap",
+  });
 
   return (
-    <div style={{position:"relative",maxWidth:1280,margin:"0 auto",padding:"0 20px 60px"}}>
-
+    <div style={{position:"relative",maxWidth:1300,margin:"0 auto",padding:"0 20px 60px"}}>
       {/* Header */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"24px 0 20px",borderBottom:`1px solid ${C.border}`,marginBottom:22}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"20px 0 18px",borderBottom:"1px solid var(--border)",marginBottom:20}}>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
-          <div style={{width:42,height:42,borderRadius:11,background:"linear-gradient(135deg,#4f8ef7,#7c5cfc)",display:"grid",placeItems:"center",fontSize:20,flexShrink:0}}>📦</div>
+          <div style={{width:40,height:40,borderRadius:10,background:"linear-gradient(135deg,#4f8ef7,#7c5cfc)",display:"grid",placeItems:"center",fontSize:18,flexShrink:0}}>📦</div>
           <div>
-            <div style={{fontSize:20,fontWeight:800,letterSpacing:-.5}}>POD <span style={{color:C.accent}}>System</span></div>
-            <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,marginTop:1}}>Proof of Delivery Portal — Focus8010</div>
+            <div style={{fontSize:18,fontWeight:800,letterSpacing:-.5}}>POD <span style={{color:"var(--accent)"}}>System</span></div>
+            <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",marginTop:1}}>Focus8010 · Proof of Delivery</div>
           </div>
         </div>
-        <div style={{fontFamily:"monospace",fontSize:11,color:C.text3,textAlign:"right"}}>
-          <span style={{color:C.text2,display:"block"}}>{new Date().toDateString()}</span>
-          Sales Order Management
-        </div>
-      </div>
-
-      {/* Filter */}
-      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:"16px 20px",display:"flex",alignItems:"flex-end",gap:14,flexWrap:"wrap",marginBottom:20}}>
-        {[["From Date",dateFrom,setDateFrom],["To Date",dateTo,setDateTo]].map(([lbl,val,set])=>(
-          <div key={lbl} style={{display:"flex",flexDirection:"column",gap:5}}>
-            <span style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase"}}>{lbl}</span>
-            <input type="date" value={val} onChange={e=>set(e.target.value)} style={{...inp,minWidth:145,cursor:"pointer"}}/>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:13,fontWeight:600}}>{user.fullName}</div>
+            <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)"}}>{user.isSuperAdmin?"Super Admin":user.isAdmin?"Admin":"Staff"}</div>
           </div>
-        ))}
-        <div style={{display:"flex",flexDirection:"column",gap:5}}>
-          <span style={{fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:1,textTransform:"uppercase"}}>Customer</span>
-          <input type="text" value={custFilter} onChange={e=>setCustFilter(e.target.value)}
-            placeholder="Filter by customer…" onKeyDown={e=>e.key==="Enter"&&loadOrders()} style={{...inp,minWidth:200}}/>
-        </div>
-        <div style={{display:"flex",gap:9,marginLeft:"auto"}}>
-          <button onClick={()=>{setDateFrom(fom);setDateTo(today);setCustFilter("");}}
-            style={{padding:"8px 16px",borderRadius:8,background:C.surface2,border:`1px solid ${C.border2}`,color:C.text2,fontWeight:600,fontSize:13,cursor:"pointer"}}>↺ Reset</button>
-          <button onClick={loadOrders} disabled={loading}
-            style={{padding:"8px 22px",borderRadius:8,background:"linear-gradient(135deg,#4f8ef7,#7c5cfc)",color:"#fff",fontWeight:700,fontSize:13,cursor:loading?"wait":"pointer",border:"none",boxShadow:"0 4px 14px rgba(79,142,247,.28)",opacity:loading?.7:1}}>
-            {loading?"⌛ Loading…":"⚡ Load Orders"}
+          <button onClick={()=>setDarkMode(d=>!d)} title="Toggle theme"
+            style={{background:"var(--surface2)",border:"1px solid var(--border)",borderRadius:8,padding:"7px 11px",cursor:"pointer",color:"var(--text)",fontSize:16,transition:"all .2s"}}>
+            {darkMode?"☀️":"🌙"}
+          </button>
+          <button onClick={handleLogout}
+            style={{padding:"7px 14px",borderRadius:8,background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.2)",color:"var(--red)",fontWeight:600,fontSize:13,cursor:"pointer"}}>
+            ⏻ Logout
           </button>
         </div>
       </div>
 
-      {/* Stats */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
-        {[["total","📋",C.accent,"TOTAL ORDERS"],["completed","✅",C.green,"COMPLETED"],["pending","⏳",C.orange,"PENDING"],["cancelled","❌",C.red,"CANCELLED"]].map(([k,ico,clr,lbl])=>(
-          <div key={k} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:13,padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
-            <div style={{width:38,height:38,borderRadius:9,background:`${clr}18`,display:"grid",placeItems:"center",fontSize:17,flexShrink:0}}>{ico}</div>
-            <div>
-              <div style={{fontSize:25,fontWeight:800,letterSpacing:-1,color:k==="total"?C.text:clr}}>{loaded?stats[k]:"—"}</div>
-              <div style={{fontFamily:"monospace",fontSize:10,color:C.text3,marginTop:1}}>{lbl}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
       {/* Tabs */}
-      <div style={{display:"flex",gap:8,marginBottom:20}}>
-        <button style={tab(activeTab==="orders")}  onClick={()=>setActiveTab("orders")}>📋 Sales Orders</button>
-        <button style={tab(activeTab==="reports")} onClick={()=>setActiveTab("reports")}>📊 Reports & KPI</button>
+      <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
+        {tabs.map(t=><button key={t.key} style={tabStyle(tab===t.key)} onClick={()=>setTab(t.key)}>{t.label}</button>)}
       </div>
 
-      {/* Orders Tab */}
-      {activeTab==="orders"&&(
-        <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 18px",borderBottom:`1px solid ${C.border}`}}>
-            <div style={{fontFamily:"monospace",fontSize:12,color:C.text2}}>
-              {error?<span style={{color:C.red}}>⚠️ {error}</span>
-                :loaded?<span>Found <strong style={{color:C.accent}}>{orders.length}</strong> order(s) · {dateFrom} → {dateTo}</span>
-                :"Select a date range and click ⚡ Load Orders"}
-            </div>
-            <div style={{fontFamily:"monospace",fontSize:10,color:C.text3}}>↕ Click any row to expand</div>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"38px 150px 100px 1fr 120px 70px 180px",padding:"9px 18px",background:C.surface2,borderBottom:`1px solid ${C.border}`}}>
-            {["","ORDER NO.","DATE","CUSTOMER","GROSS (RM)","ITEMS","STATUS"].map((h,i)=>(
-              <div key={i} style={{padding:"0 8px",fontFamily:"monospace",fontSize:10,color:C.text3,letterSpacing:.9,textTransform:"uppercase",textAlign:i>=4?"center":"left"}}>{h}</div>
-            ))}
-          </div>
-          {loading?(
-            <div style={{padding:56,textAlign:"center",fontFamily:"monospace",fontSize:13,color:C.text3}}>
-              <span style={{display:"inline-block",width:18,height:18,border:`2px solid ${C.border}`,borderTopColor:C.accent,borderRadius:"50%",animation:"spin .7s linear infinite",marginRight:10,verticalAlign:"middle"}}/>
-              Querying SQL Server…
-            </div>
-          ):!loaded&&!error?(
-            <div style={{padding:56,textAlign:"center"}}>
-              <div style={{fontSize:34,opacity:.2}}>🗂️</div>
-              <div style={{fontFamily:"monospace",fontSize:13,color:C.text3,marginTop:10}}>No orders loaded yet.</div>
-            </div>
-          ):error?(
-            <div style={{padding:40,textAlign:"center"}}>
-              <div style={{fontSize:34,opacity:.3}}>⚠️</div>
-              <div style={{fontFamily:"monospace",fontSize:13,color:C.red,marginTop:10}}>{error}</div>
-            </div>
-          ):orders.length===0?(
-            <div style={{padding:56,textAlign:"center"}}>
-              <div style={{fontSize:34,opacity:.2}}>🔍</div>
-              <div style={{fontFamily:"monospace",fontSize:13,color:C.text3,marginTop:10}}>No orders found.</div>
-            </div>
-          ):orders.map(o=>{
-            const gross=o.items.reduce((s,it)=>s+(+it.gross||0),0);
-            const open=!!expanded[o.id];
-            const st=pod[o.id]||{};
-            return(
-              <div key={o.id} style={{borderBottom:`1px solid ${C.border}`}}>
-                <div onClick={()=>setExpanded(e=>({...e,[o.id]:!e[o.id]}))}
-                  style={{display:"grid",gridTemplateColumns:"38px 150px 100px 1fr 120px 70px 180px",padding:"0 18px",minHeight:52,alignItems:"center",cursor:"pointer",background:open?"rgba(79,142,247,.05)":"transparent",transition:"background .15s"}}>
-                  <div style={{padding:"0 8px"}}>
-                    <div style={{width:20,height:20,borderRadius:6,background:open?"rgba(79,142,247,.12)":C.surface2,border:`1px solid ${open?C.accent:C.border}`,display:"grid",placeItems:"center",fontSize:12,color:open?C.accent:C.text3,transition:"all .2s",transform:open?"rotate(90deg)":"none"}}>›</div>
-                  </div>
-                  <div style={{padding:"0 8px",fontFamily:"monospace",fontSize:12,color:C.accent,fontWeight:500}}>{o.id}</div>
-                  <div style={{padding:"0 8px",fontFamily:"monospace",fontSize:12,color:C.text2}}>{o.date}</div>
-                  <div style={{padding:"0 8px",fontSize:13,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{o.customer}</div>
-                  <div style={{padding:"0 8px",fontFamily:"monospace",fontSize:13,fontWeight:600,textAlign:"center"}}>RM {gross.toFixed(2)}</div>
-                  <div style={{padding:"0 8px",fontFamily:"monospace",fontSize:12,color:C.text2,textAlign:"center"}}>{o.items.length}</div>
-                  <div style={{padding:"0 8px",textAlign:"center"}}><Badge status={st.status}/></div>
-                </div>
-                {open&&(
-                  <OrderDetail order={o} st={st}
-                    onStatus={s=>setPod(p=>({...p,[o.id]:{...p[o.id],status:s}}))}
-                    onComment={c=>setPod(p=>({...p,[o.id]:{...p[o.id],comment:c}}))}
-                    onSubmit={()=>submitPOD(o.id)}/>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+      {/* Content */}
+      {tab==="so"     && <OrderList docType="SO" user={user} addToast={addToast}/>}
+      {tab==="iv"     && <OrderList docType="IV" user={user} addToast={addToast}/>}
+      {tab==="so_kpi" && <KPIPage   docType="SO" addToast={addToast}/>}
+      {tab==="iv_kpi" && <KPIPage   docType="IV" addToast={addToast}/>}
+      {tab==="users"  && <UserManagement addToast={addToast}/>}
 
-      {/* Reports Tab */}
-      {activeTab==="reports"&&(
-        <ReportsPage orders={orders} pod={pod} dateFrom={dateFrom} dateTo={dateTo} loaded={loaded}/>
-      )}
-
+      <Toasts list={toasts}/>
     </div>
   );
 }
