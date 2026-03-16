@@ -584,8 +584,9 @@ app.get("/api/kpi/invoices", authMiddleware, async (req, res) => {
 // GET /api/report?from=&to=
 // ══════════════════════════════════════════════════════════════════════════
 app.get("/api/report", authMiddleware, async (req, res) => {
-  const { from, to } = req.query;
+  const { from, to, type } = req.query;
   if (!from || !to) return res.status(400).json({ error: "from and to required." });
+  const reportType = type || "SO"; // "SO" or "IV"
 
   try {
     const db = await getPool();
@@ -702,14 +703,22 @@ app.get("/api/report", authMiddleware, async (req, res) => {
           i.InvDate DESC
       `);
 
-    return res.json({
-      generatedAt: new Date().toISOString(),
-      dateFrom: from, dateTo: to,
-      soKpi:    soKpiData,
-      ivKpi:    ivKpiData,
-      soList:   soList.recordset,
-      ivList:   ivList.recordset,
-    });
+    // Only return data relevant to the requested report type
+    if (reportType === "IV") {
+      return res.json({
+        generatedAt: new Date().toISOString(),
+        dateFrom: from, dateTo: to,
+        ivKpi:  ivKpiData,
+        ivList: ivList.recordset,
+      });
+    } else {
+      return res.json({
+        generatedAt: new Date().toISOString(),
+        dateFrom: from, dateTo: to,
+        soKpi:  soKpiData,
+        soList: soList.recordset,
+      });
+    }
 
   } catch (err) {
     console.error("Report Error:", err.message);
