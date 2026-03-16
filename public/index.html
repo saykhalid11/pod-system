@@ -698,6 +698,390 @@ function OrderList({ docType, user, addToast }){
 // ══════════════════════════════════════════════════════════════════════════
 // KPI PAGE
 // ══════════════════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════════════════
+// REPORT PAGE — Print & Export
+// ══════════════════════════════════════════════════════════════════════════
+function ReportPage({ user, addToast }){
+  const [dateFrom, setDateFrom] = useState(last7);
+  const [dateTo,   setDateTo]   = useState(today);
+  const [loading,  setLoading]  = useState(false);
+  const [data,     setData]     = useState(null);
+
+  const SO_LABELS = {0:"Pending", 1:"Completed", 2:"Cancelled"};
+  const IV_LABELS = {0:"Active",  2:"Cancelled"};
+  const SO_COLORS = {0:"#f59e0b", 1:"#22c55e", 2:"#ef4444"};
+  const IV_COLORS = {0:"#22c55e", 2:"#ef4444"};
+
+  async function loadReport(){
+    if(!dateFrom||!dateTo){ addToast("warn","⚠️ Required","Select both dates."); return; }
+    if(dateFrom>dateTo){ addToast("warn","⚠️ Invalid","From must be before To."); return; }
+    setLoading(true);
+    try{
+      const d = await apiFetch(`/api/report?from=${dateFrom}&to=${dateTo}`);
+      setData(d);
+      addToast("success","✅ Report Ready","Click Print PDF or Export Excel.");
+    }catch(err){ addToast("error","❌ Failed",err.message); }
+    finally{ setLoading(false); }
+  }
+
+  function printReport(){
+    if(!data){ addToast("warn","⚠️","Load report first."); return; }
+    const win = window.open("","_blank");
+    const genDate = new Date(data.generatedAt).toLocaleString("en-MY");
+    const fmtRM = v => "RM "+Number(v||0).toLocaleString("en-MY",{minimumFractionDigits:2,maximumFractionDigits:2});
+    const fmtPct = v => Number(v||0).toFixed(1)+"%";
+
+    const soRows = data.soList.map(r => {
+      const st = r.DOStatus??0;
+      const color = SO_COLORS[st]||"#f59e0b";
+      const label = SO_LABELS[st]||"Pending";
+      return `<tr>
+        <td>${r.SONo}</td><td>${r.DocDate}</td><td>${r.CustomerName}</td>
+        <td class="num">${fmtRM(r.SubTotal)}</td>
+        <td><span class="badge" style="background:${color}22;color:${color}">${label}</span></td>
+        <td>${r.CancellationRemarks&&r.CancellationRemarks!=="NA"?r.CancellationRemarks:"—"}</td>
+      </tr>`;
+    }).join("");
+
+    const ivRows = data.ivList.map(r => {
+      const st = r.InvoiceStatus??0;
+      const color = IV_COLORS[st]||"#22c55e";
+      const label = IV_LABELS[st]||"Active";
+      return `<tr>
+        <td>${r.InvNo}</td><td>${r.InvDate}</td><td>${r.CustomerName}</td>
+        <td class="num">${fmtRM(r.SubTotal)}</td>
+        <td><span class="badge" style="background:${color}22;color:${color}">${label}</span></td>
+        <td>${r.CancellationRemarks&&r.CancellationRemarks!=="NA"?r.CancellationRemarks:"—"}</td>
+      </tr>`;
+    }).join("");
+
+    const sk = data.soKpi, ik = data.ivKpi;
+
+    win.document.write(`<!DOCTYPE html><html><head>
+    <title>Delivery Status Report — ${dateFrom} to ${dateTo}</title>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:'Segoe UI',sans-serif;font-size:12px;color:#1a1a2e;background:#fff;padding:20px 30px}
+      .header{display:flex;align-items:center;justify-content:space-between;padding-bottom:14px;border-bottom:2px solid #4f8ef7;margin-bottom:18px}
+      .header-left{display:flex;align-items:center;gap:12px}
+      .logo{height:48px;width:auto}
+      .company{font-size:18px;font-weight:800;color:#1a1a2e}
+      .company-sub{font-size:10px;color:#666;margin-top:2px}
+      .report-title{text-align:right}
+      .report-title h1{font-size:16px;font-weight:700;color:#4f8ef7}
+      .report-title p{font-size:11px;color:#666;margin-top:3px}
+      .meta{display:flex;gap:24px;padding:10px 14px;background:#f8f9fc;border-radius:8px;margin-bottom:18px;font-size:11px;color:#444}
+      .meta strong{color:#1a1a2e}
+      .section{margin-bottom:24px}
+      .section-title{font-size:13px;font-weight:700;color:#4f8ef7;border-bottom:1px solid #e0e4f0;padding-bottom:6px;margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px}
+      .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:8px}
+      .kpi-card{padding:12px;border-radius:8px;border:1px solid #e0e4f0;background:#fafbff}
+      .kpi-val{font-size:20px;font-weight:800;letter-spacing:-1px}
+      .kpi-lbl{font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.8px;margin-top:3px}
+      .kpi-sub{font-size:10px;color:#444;margin-top:4px}
+      table{width:100%;border-collapse:collapse;font-size:11px}
+      th{background:#f0f3ff;padding:8px 10px;text-align:left;font-weight:600;color:#4f8ef7;border-bottom:2px solid #d0d5ee;white-space:nowrap}
+      td{padding:7px 10px;border-bottom:1px solid #f0f0f8;vertical-align:top}
+      tr:nth-child(even) td{background:#fafbff}
+      .num{text-align:right;font-family:monospace}
+      .badge{padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600}
+      .footer{margin-top:24px;padding-top:12px;border-top:1px solid #e0e4f0;display:flex;justify-content:space-between;font-size:10px;color:#999}
+      .total-row td{font-weight:700;background:#f0f3ff!important;border-top:2px solid #d0d5ee}
+      @media print{
+        body{padding:10px 15px}
+        .no-print{display:none!important}
+        @page{margin:10mm;size:A4 landscape}
+      }
+    </style></head><body>
+
+    <!-- Print button -->
+    <div class="no-print" style="text-align:right;margin-bottom:16px">
+      <button onclick="window.print()" style="background:linear-gradient(135deg,#4f8ef7,#7c5cfc);color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;margin-right:8px">🖨️ Print / Save as PDF</button>
+      <button onclick="window.close()" style="background:#f0f3ff;color:#4f8ef7;border:1px solid #d0d5ee;padding:10px 18px;border-radius:8px;font-size:13px;cursor:pointer">✕ Close</button>
+    </div>
+
+    <!-- Header -->
+    <div class="header">
+      <div class="header-left">
+        <img src="${logo_b64}" class="logo" alt="StackSuite"/>
+        <div>
+          <div class="company">StackSuite</div>
+          <div class="company-sub">StackSuite Technologies Sdn Bhd</div>
+        </div>
+      </div>
+      <div class="report-title">
+        <h1>Delivery Status Summary Report</h1>
+        <p>Period: ${dateFrom} to ${dateTo}</p>
+        <p>Generated: ${genDate} &nbsp;|&nbsp; By: ${user.fullName}</p>
+      </div>
+    </div>
+
+    <!-- SO KPI -->
+    <div class="section">
+      <div class="section-title">📋 Sales Order KPI Summary</div>
+      <div class="kpi-grid">
+        <div class="kpi-card"><div class="kpi-val" style="color:#4f8ef7">${sk.totalCount}</div><div class="kpi-lbl">Total Orders</div><div class="kpi-sub">${fmtRM(sk.totalValue)}</div></div>
+        <div class="kpi-card"><div class="kpi-val" style="color:#22c55e">${sk.completedCount}</div><div class="kpi-lbl">Completed</div><div class="kpi-sub">${fmtRM(sk.completedValue)} · ${fmtPct(sk.completionRate)}</div></div>
+        <div class="kpi-card"><div class="kpi-val" style="color:#f59e0b">${sk.pendingCount}</div><div class="kpi-lbl">Pending</div><div class="kpi-sub">${fmtRM(sk.pendingValue)}</div></div>
+        <div class="kpi-card"><div class="kpi-val" style="color:#ef4444">${sk.cancelledCount}</div><div class="kpi-lbl">Cancelled</div><div class="kpi-sub">${fmtRM(sk.cancelledValue)} · ${fmtPct(sk.cancellationRate)}</div></div>
+      </div>
+    </div>
+
+    <!-- Invoice KPI -->
+    <div class="section">
+      <div class="section-title">🧾 Invoice KPI Summary</div>
+      <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="kpi-card"><div class="kpi-val" style="color:#4f8ef7">${ik.totalCount}</div><div class="kpi-lbl">Total Invoices</div><div class="kpi-sub">${fmtRM(ik.totalValue)}</div></div>
+        <div class="kpi-card"><div class="kpi-val" style="color:#22c55e">${ik.activeCount}</div><div class="kpi-lbl">Active</div><div class="kpi-sub">${fmtRM(ik.activeValue)} · ${fmtPct(ik.activeRate)}</div></div>
+        <div class="kpi-card"><div class="kpi-val" style="color:#ef4444">${ik.cancelledCount}</div><div class="kpi-lbl">Cancelled</div><div class="kpi-sub">${fmtRM(ik.cancelledValue)} · ${fmtPct(ik.cancellationRate)}</div></div>
+      </div>
+    </div>
+
+    <!-- SO List -->
+    <div class="section">
+      <div class="section-title">📋 Sales Orders — All Statuses (Grouped)</div>
+      <table>
+        <thead><tr><th>SO No.</th><th>Date</th><th>Customer</th><th style="text-align:right">Sub Total</th><th>Status</th><th>Remarks</th></tr></thead>
+        <tbody>${soRows}</tbody>
+        <tfoot><tr class="total-row"><td colspan="3">TOTAL (${data.soList.length} orders)</td><td class="num">${fmtRM(data.soList.reduce((s,r)=>s+(+r.SubTotal||0),0))}</td><td colspan="2"></td></tr></tfoot>
+      </table>
+    </div>
+
+    <!-- Invoice List -->
+    <div class="section">
+      <div class="section-title">🧾 Invoices — All Statuses (Grouped)</div>
+      <table>
+        <thead><tr><th>Invoice No.</th><th>Date</th><th>Customer</th><th style="text-align:right">Sub Total</th><th>Status</th><th>Remarks</th></tr></thead>
+        <tbody>${ivRows}</tbody>
+        <tfoot><tr class="total-row"><td colspan="3">TOTAL (${data.ivList.length} invoices)</td><td class="num">${fmtRM(data.ivList.reduce((s,r)=>s+(+r.SubTotal||0),0))}</td><td colspan="2"></td></tr></tfoot>
+      </table>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <span>© StackSuite Technologies Sdn Bhd. All rights reserved.</span>
+      <span>Confidential — Internal Use Only</span>
+      <span>Page 1</span>
+    </div>
+    </body></html>`);
+    win.document.close();
+  }
+
+  function exportExcel(){
+    if(!data){ addToast("warn","⚠️","Load report first."); return; }
+    const fmtRM = v => Number(v||0).toFixed(2);
+    const SO_LABELS = {0:"Pending",1:"Completed",2:"Cancelled"};
+    const IV_LABELS = {0:"Active",2:"Cancelled"};
+
+    // Build CSV content
+    const lines = [];
+    lines.push("DELIVERY STATUS SUMMARY REPORT");
+    lines.push(`Period:,${dateFrom} to ${dateTo}`);
+    lines.push(`Generated:,${new Date(data.generatedAt).toLocaleString("en-MY")}`);
+    lines.push(`Generated By:,${user.fullName}`);
+    lines.push("");
+
+    // SO KPI
+    lines.push("SALES ORDER KPI");
+    lines.push("Total Orders,Completed,Pending,Cancelled,Total Value (RM),Completed Value (RM),Pending Value (RM),Cancelled Value (RM),Completion Rate,Cancellation Rate");
+    const sk = data.soKpi;
+    lines.push(`${sk.totalCount},${sk.completedCount},${sk.pendingCount},${sk.cancelledCount},${fmtRM(sk.totalValue)},${fmtRM(sk.completedValue)},${fmtRM(sk.pendingValue)},${fmtRM(sk.cancelledValue)},${sk.completionRate}%,${sk.cancellationRate}%`);
+    lines.push("");
+
+    // IV KPI
+    lines.push("INVOICE KPI");
+    lines.push("Total Invoices,Active,Cancelled,Total Value (RM),Active Value (RM),Cancelled Value (RM),Active Rate,Cancellation Rate");
+    const ik = data.ivKpi;
+    lines.push(`${ik.totalCount},${ik.activeCount},${ik.cancelledCount},${fmtRM(ik.totalValue)},${fmtRM(ik.activeValue)},${fmtRM(ik.cancelledValue)},${ik.activeRate}%,${ik.cancellationRate}%`);
+    lines.push("");
+
+    // SO List
+    lines.push("SALES ORDERS");
+    lines.push("SO No.,Date,Customer Code,Customer Name,Sub Total (RM),Status,Remarks");
+    data.soList.forEach(r=>{
+      const remarks = (r.CancellationRemarks&&r.CancellationRemarks!=="NA") ? r.CancellationRemarks.replace(/,/g,";") : "";
+      lines.push(`${r.SONo},${r.DocDate},${r.CustomerCode},"${r.CustomerName}",${fmtRM(r.SubTotal)},${SO_LABELS[r.DOStatus??0]||"Pending"},"${remarks}"`);
+    });
+    lines.push(`,,,,${fmtRM(data.soList.reduce((s,r)=>s+(+r.SubTotal||0),0))},TOTAL`);
+    lines.push("");
+
+    // IV List
+    lines.push("INVOICES");
+    lines.push("Invoice No.,Date,Customer Code,Customer Name,Sub Total (RM),Status,Remarks");
+    data.ivList.forEach(r=>{
+      const remarks = (r.CancellationRemarks&&r.CancellationRemarks!=="NA") ? r.CancellationRemarks.replace(/,/g,";") : "";
+      lines.push(`${r.InvNo},${r.InvDate},${r.CustomerCode},"${r.CustomerName}",${fmtRM(r.SubTotal)},${IV_LABELS[r.InvoiceStatus??0]||"Active"},"${remarks}"`);
+    });
+    lines.push(`,,,,${fmtRM(data.ivList.reduce((s,r)=>s+(+r.SubTotal||0),0))},TOTAL`);
+
+    // Download
+    const blob = new Blob([lines.join("\n")], {type:"text/csv;charset=utf-8;"});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url;
+    a.download = `StackSuite_Report_${dateFrom}_to_${dateTo}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    addToast("success","✅ Exported","Excel file downloaded successfully.");
+  }
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      {/* Filter + Actions */}
+      <div className="card" style={{padding:"16px 20px",display:"flex",alignItems:"flex-end",gap:14,flexWrap:"wrap"}}>
+        {[["From",dateFrom,setDateFrom],["To",dateTo,setDateTo]].map(([lbl,val,set])=>(
+          <div key={lbl} style={{display:"flex",flexDirection:"column",gap:5}}>
+            <span style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase"}}>{lbl}</span>
+            <input type="date" value={val} onChange={e=>set(e.target.value)} style={{...inp,minWidth:145,width:"auto",cursor:"pointer"}}/>
+          </div>
+        ))}
+        <button onClick={loadReport} disabled={loading}
+          style={{...btnPrimary,padding:"8px 20px",marginTop:18,opacity:loading?.7:1}}>
+          {loading?"⌛ Loading…":"📊 Generate Report"}
+        </button>
+        {data&&<>
+          <button onClick={printReport}
+            style={{...btnPrimary,padding:"8px 20px",marginTop:18,background:"linear-gradient(135deg,#22c55e,#16a34a)",boxShadow:"0 4px 14px rgba(34,197,94,.3)"}}>
+            🖨️ Print / PDF
+          </button>
+          <button onClick={exportExcel}
+            style={{...btnPrimary,padding:"8px 20px",marginTop:18,background:"linear-gradient(135deg,#f59e0b,#d97706)",boxShadow:"0 4px 14px rgba(245,158,11,.3)"}}>
+            📥 Export Excel
+          </button>
+        </>}
+      </div>
+
+      {!data&&!loading&&(
+        <div style={{padding:60,textAlign:"center"}}>
+          <div style={{fontSize:40,opacity:.2}}>📄</div>
+          <div style={{fontFamily:"monospace",fontSize:13,color:"var(--text3)",marginTop:12}}>Select a date range and click Generate Report.</div>
+        </div>
+      )}
+
+      {loading&&(
+        <div style={{padding:60,textAlign:"center",fontFamily:"monospace",fontSize:13,color:"var(--text3)"}}>
+          <span style={{display:"inline-block",width:16,height:16,border:"2px solid var(--border)",borderTopColor:"var(--accent)",borderRadius:"50%",animation:"spin .7s linear infinite",marginRight:8,verticalAlign:"middle"}}/>
+          Fetching report data…
+        </div>
+      )}
+
+      {data&&!loading&&(
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {/* SO KPI Cards */}
+          <div className="card" style={{padding:"18px 22px"}}>
+            <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:14}}>📋 Sales Order KPI — {dateFrom} to {dateTo}</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+              {[
+                {lbl:"Total Orders",val:data.soKpi.totalCount,sub:fmtRM(data.soKpi.totalValue),color:"var(--accent)"},
+                {lbl:"Completed",val:data.soKpi.completedCount,sub:fmtRM(data.soKpi.completedValue)+" · "+data.soKpi.completionRate+"%",color:"var(--green)"},
+                {lbl:"Pending",val:data.soKpi.pendingCount,sub:fmtRM(data.soKpi.pendingValue),color:"var(--orange)"},
+                {lbl:"Cancelled",val:data.soKpi.cancelledCount,sub:fmtRM(data.soKpi.cancelledValue)+" · "+data.soKpi.cancellationRate+"%",color:"var(--red)"},
+              ].map(c=>(
+                <div key={c.lbl} style={{padding:"12px 14px",background:"var(--surface2)",borderRadius:10,border:"1px solid var(--border)"}}>
+                  <div style={{fontSize:24,fontWeight:800,color:c.color,letterSpacing:-1}}>{c.val}</div>
+                  <div style={{fontFamily:"monospace",fontSize:9,color:"var(--text3)",textTransform:"uppercase",letterSpacing:.8,marginTop:2}}>{c.lbl}</div>
+                  <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text2)",marginTop:4}}>{c.sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* IV KPI Cards */}
+          <div className="card" style={{padding:"18px 22px"}}>
+            <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:14}}>🧾 Invoice KPI — {dateFrom} to {dateTo}</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+              {[
+                {lbl:"Total Invoices",val:data.ivKpi.totalCount,sub:fmtRM(data.ivKpi.totalValue),color:"var(--accent)"},
+                {lbl:"Active",val:data.ivKpi.activeCount,sub:fmtRM(data.ivKpi.activeValue)+" · "+data.ivKpi.activeRate+"%",color:"var(--green)"},
+                {lbl:"Cancelled",val:data.ivKpi.cancelledCount,sub:fmtRM(data.ivKpi.cancelledValue)+" · "+data.ivKpi.cancellationRate+"%",color:"var(--red)"},
+              ].map(c=>(
+                <div key={c.lbl} style={{padding:"12px 14px",background:"var(--surface2)",borderRadius:10,border:"1px solid var(--border)"}}>
+                  <div style={{fontSize:24,fontWeight:800,color:c.color,letterSpacing:-1}}>{c.val}</div>
+                  <div style={{fontFamily:"monospace",fontSize:9,color:"var(--text3)",textTransform:"uppercase",letterSpacing:.8,marginTop:2}}>{c.lbl}</div>
+                  <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text2)",marginTop:4}}>{c.sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* SO Table Preview */}
+          <div className="card" style={{overflow:"hidden"}}>
+            <div style={{padding:"12px 18px",borderBottom:"1px solid var(--border)",fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase"}}>
+              📋 Sales Orders ({data.soList.length}) — Grouped by Status
+            </div>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                <thead><tr style={{background:"var(--surface2)"}}>
+                  {["SO No.","Date","Customer","Sub Total (RM)","Status","Remarks"].map((h,i)=>(
+                    <th key={h} style={{padding:"8px 12px",textAlign:i===3?"right":"left",fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:.8,textTransform:"uppercase",borderBottom:"1px solid var(--border)",fontWeight:500,whiteSpace:"nowrap"}}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {data.soList.map((r,i)=>{
+                    const st=r.DOStatus??0;
+                    const color=SO_COLORS[st]||"#f59e0b";
+                    const label=SO_LABELS[st]||"Pending";
+                    return <tr key={i} style={{borderBottom:"1px solid rgba(128,128,128,.07)"}}>
+                      <td style={{padding:"8px 12px",fontFamily:"monospace",fontSize:12,color:"var(--accent)"}}>{r.SONo}</td>
+                      <td style={{padding:"8px 12px",fontFamily:"monospace",fontSize:12,color:"var(--text2)"}}>{r.DocDate}</td>
+                      <td style={{padding:"8px 12px",fontSize:13,fontWeight:600}}>{r.CustomerName}</td>
+                      <td style={{padding:"8px 12px",fontFamily:"monospace",fontSize:12,textAlign:"right"}}>{fmtRM(r.SubTotal)}</td>
+                      <td style={{padding:"8px 12px"}}><span style={{background:color+"22",color,padding:"2px 8px",borderRadius:10,fontFamily:"monospace",fontSize:11,fontWeight:600}}>{label}</span></td>
+                      <td style={{padding:"8px 12px",fontSize:12,color:"var(--text2)"}}>{r.CancellationRemarks&&r.CancellationRemarks!=="NA"?r.CancellationRemarks:"—"}</td>
+                    </tr>;
+                  })}
+                  <tr style={{background:"var(--surface2)",borderTop:"1px solid var(--border2)"}}>
+                    <td colSpan={3} style={{padding:"8px 12px",fontWeight:700,color:"var(--accent)"}}>TOTAL ({data.soList.length} orders)</td>
+                    <td style={{padding:"8px 12px",fontFamily:"monospace",fontWeight:700,textAlign:"right",color:"var(--accent)"}}>{fmtRM(data.soList.reduce((s,r)=>s+(+r.SubTotal||0),0))}</td>
+                    <td colSpan={2}></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* IV Table Preview */}
+          <div className="card" style={{overflow:"hidden"}}>
+            <div style={{padding:"12px 18px",borderBottom:"1px solid var(--border)",fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase"}}>
+              🧾 Invoices ({data.ivList.length}) — Grouped by Status
+            </div>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                <thead><tr style={{background:"var(--surface2)"}}>
+                  {["Invoice No.","Date","Customer","Sub Total (RM)","Status","Remarks"].map((h,i)=>(
+                    <th key={h} style={{padding:"8px 12px",textAlign:i===3?"right":"left",fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:.8,textTransform:"uppercase",borderBottom:"1px solid var(--border)",fontWeight:500,whiteSpace:"nowrap"}}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {data.ivList.map((r,i)=>{
+                    const st=r.InvoiceStatus??0;
+                    const color=IV_COLORS[st]||"#22c55e";
+                    const label=IV_LABELS[st]||"Active";
+                    return <tr key={i} style={{borderBottom:"1px solid rgba(128,128,128,.07)"}}>
+                      <td style={{padding:"8px 12px",fontFamily:"monospace",fontSize:12,color:"var(--accent)"}}>{r.InvNo}</td>
+                      <td style={{padding:"8px 12px",fontFamily:"monospace",fontSize:12,color:"var(--text2)"}}>{r.InvDate}</td>
+                      <td style={{padding:"8px 12px",fontSize:13,fontWeight:600}}>{r.CustomerName}</td>
+                      <td style={{padding:"8px 12px",fontFamily:"monospace",fontSize:12,textAlign:"right"}}>{fmtRM(r.SubTotal)}</td>
+                      <td style={{padding:"8px 12px"}}><span style={{background:color+"22",color,padding:"2px 8px",borderRadius:10,fontFamily:"monospace",fontSize:11,fontWeight:600}}>{label}</span></td>
+                      <td style={{padding:"8px 12px",fontSize:12,color:"var(--text2)"}}>{r.CancellationRemarks&&r.CancellationRemarks!=="NA"?r.CancellationRemarks:"—"}</td>
+                    </tr>;
+                  })}
+                  <tr style={{background:"var(--surface2)",borderTop:"1px solid var(--border2)"}}>
+                    <td colSpan={3} style={{padding:"8px 12px",fontWeight:700,color:"var(--accent)"}}>TOTAL ({data.ivList.length} invoices)</td>
+                    <td style={{padding:"8px 12px",fontFamily:"monospace",fontWeight:700,textAlign:"right",color:"var(--accent)"}}>{fmtRM(data.ivList.reduce((s,r)=>s+(+r.SubTotal||0),0))}</td>
+                    <td colSpan={2}></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function KPIPage({ docType, addToast }){
   const isSO = docType==="SO";
   const [from, setFrom] = useState(last7);
@@ -899,6 +1283,7 @@ function App(){
     { key:"iv",      label:"🧾 Invoices",       show:true },
     { key:"so_kpi",  label:"📊 SO KPI",         show:user.canViewReports },
     { key:"iv_kpi",  label:"📈 Invoice KPI",    show:user.canViewReports },
+    { key:"report",  label:"📄 Reports",        show:user.canViewReports },
     { key:"users",   label:"👥 User Management",show:user.canManageUsers },
   ].filter(t=>t.show);
 
@@ -946,6 +1331,7 @@ function App(){
       {tab==="iv"     && <OrderList docType="IV" user={user} addToast={addToast}/>}
       {tab==="so_kpi" && <KPIPage   docType="SO" addToast={addToast}/>}
       {tab==="iv_kpi" && <KPIPage   docType="IV" addToast={addToast}/>}
+      {tab==="report" && <ReportPage user={user} addToast={addToast}/>}
       {tab==="users"  && <UserManagement addToast={addToast}/>}
 
       <Toasts list={toasts}/>
