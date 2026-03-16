@@ -761,7 +761,7 @@ function KPIPage({ docType, addToast }){
 
       {data&&!loading&&<>
         {/* KPI Rings */}
-        <div style={{card}>
+        <div style={card}>
           <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:20}}>📈 Key Performance Indicators</div>
           <div style={{display:"grid",gridTemplateColumns:`repeat(${isSO?3:2},1fr)`,gap:20}}>
             {isSO?<>
@@ -800,11 +800,11 @@ function KPIPage({ docType, addToast }){
 
         {/* Charts */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-          <div style={{card}>
+          <div style={card}>
             <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>📦 Count Breakdown</div>
             <BarChartSimple bars={countBars} isValue={false}/>
           </div>
-          <div style={{card}>
+          <div style={card}>
             <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>💰 Value Breakdown (RM)</div>
             <BarChartSimple bars={valueBars} isValue={true}/>
           </div>
@@ -812,11 +812,11 @@ function KPIPage({ docType, addToast }){
 
         {/* Donut + Table */}
         <div style={{display:"grid",gridTemplateColumns:"300px 1fr",gap:16}}>
-          <div style={{card}>
+          <div style={card}>
             <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:14}}>🥧 Distribution</div>
             <DonutChart slices={donutSlices}/>
           </div>
-          <div style={{card}>
+          <div style={card}>
             <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase",marginBottom:14}}>🎯 Performance Table</div>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
               <thead><tr style={{background:"var(--surface2)"}}>
