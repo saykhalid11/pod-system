@@ -7,7 +7,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -384,87 +384,122 @@ function ReportPage({ user, addToast }){
   }
 
 
-  // ── EXPORT EXCEL (XLSX) ────────────────────────────────────────────────
-  function exportExcel(){
+  // ── EXPORT EXCEL (XLSX via ExcelJS) ──────────────────────────────────
+  async function exportExcel(){
     if(!data){ addToast("warn","⚠️","Load report first."); return; }
-    if(typeof XLSX === "undefined"){ addToast("error","❌ Error","SheetJS not loaded. Check internet connection."); return; }
+    if(typeof ExcelJS === "undefined"){ addToast("error","❌ Error","ExcelJS not loaded. Check internet connection."); return; }
 
     const list    = isSO ? data.soList  : data.ivList;
     const kpi     = isSO ? data.soKpi   : data.ivKpi;
     const labels  = isSO ? SO_LABELS    : IV_LABELS;
-    const colors  = isSO ? SO_COLORS    : IV_COLORS;
     const idKey   = isSO ? "SONo"       : "InvNo";
     const dateKey = isSO ? "DocDate"    : "InvDate";
     const stKey   = isSO ? "DOStatus"   : "InvoiceStatus";
     const title   = isSO ? "Sales Order Delivery Report" : "Invoice Status Report";
-    const fn      = v => Number(v||0).toFixed(2);
-    const numFmt  = '#,##0.00';
+    const fn      = v => Number(v||0);
 
-    // ── helpers ──
-    const cell = (v, t="s") => ({v, t});
-    const numCell = v => ({v: Number(v)||0, t:"n", z: numFmt});
-    const pctCell = v => ({v: (parseFloat(v)||0)/100, t:"n", z:"0.0%"});
-
-    // styles
-    const titleStyle   = { font:{bold:true, sz:14, color:{rgb:"1E3A8A"}}, alignment:{horizontal:"left"} };
-    const metaStyle    = { font:{sz:10, color:{rgb:"555555"}}, alignment:{horizontal:"left"} };
-    const sectionStyle = { font:{bold:true, sz:11, color:{rgb:"FFFFFF"}}, fill:{fgColor:{rgb:"1D4ED8"}}, alignment:{horizontal:"left"} };
-    const kpiHdrStyle  = { font:{bold:true, sz:10, color:{rgb:"FFFFFF"}}, fill:{fgColor:{rgb:"1E40AF"}}, alignment:{horizontal:"center"}, border:{bottom:{style:"thin",color:{rgb:"BFDBFE"}}} };
-    const kpiValStyle  = { font:{bold:true, sz:11, color:{rgb:"1E3A8A"}}, fill:{fgColor:{rgb:"EFF6FF"}}, alignment:{horizontal:"center"}, border:{bottom:{style:"thin",color:{rgb:"BFDBFE"}}} };
-    const colHdrStyle  = { font:{bold:true, sz:10, color:{rgb:"FFFFFF"}}, fill:{fgColor:{rgb:"374151"}}, alignment:{horizontal:"center"}, border:{bottom:{style:"medium",color:{rgb:"6B7280"}}}, wrapText:true };
-    const colHdrRStyle = { font:{bold:true, sz:10, color:{rgb:"FFFFFF"}}, fill:{fgColor:{rgb:"374151"}}, alignment:{horizontal:"right"}, border:{bottom:{style:"medium",color:{rgb:"6B7280"}}} };
-    const rowEvenStyle = { fill:{fgColor:{rgb:"F9FAFB"}}, alignment:{vertical:"center"} };
-    const rowOddStyle  = { fill:{fgColor:{rgb:"FFFFFF"}}, alignment:{vertical:"center"} };
-    const monoStyle    = { font:{name:"Courier New", sz:10} };
-    const totalStyle   = { font:{bold:true, sz:11, color:{rgb:"FFFFFF"}}, fill:{fgColor:{rgb:"1D4ED8"}}, alignment:{horizontal:"right"}, numFmt };
-    const totalLblStyle= { font:{bold:true, sz:11, color:{rgb:"FFFFFF"}}, fill:{fgColor:{rgb:"1D4ED8"}}, alignment:{horizontal:"left"} };
-    const statusStyles = {
-      Completed: { font:{bold:true, color:{rgb:"14532D"}}, fill:{fgColor:{rgb:"DCFCE7"}}, alignment:{horizontal:"center"} },
-      Active:    { font:{bold:true, color:{rgb:"14532D"}}, fill:{fgColor:{rgb:"DCFCE7"}}, alignment:{horizontal:"center"} },
-      Pending:   { font:{bold:true, color:{rgb:"78350F"}}, fill:{fgColor:{rgb:"FEF3C7"}}, alignment:{horizontal:"center"} },
-      Cancelled: { font:{bold:true, color:{rgb:"7F1D1D"}}, fill:{fgColor:{rgb:"FEE2E2"}}, alignment:{horizontal:"center"} },
+    // ── colour palette ──
+    const C = {
+      darkBlue:"1D4ED8", midBlue:"2563EB", lightBlue:"DBEAFE", xlightBlue:"EFF6FF",
+      darkGrey:"1F2937", midGrey:"374151", white:"FFFFFFFF", totalBg:"1E3A8A",
+      greenBg:"DCFCE7", greenFg:"14532D",
+      yellowBg:"FEF9C3", yellowFg:"713F12",
+      redBg:"FEE2E2",    redFg:"7F1D1D",
     };
 
-    const ws = {};
-    const merge = [];
-    let R = 0; // current row (0-indexed)
-    const COLS = 7; // A-G
+    const argb = hex => hex.length===6 ? "FF"+hex : hex;
 
-    const setCell = (r, c, cellObj, style) => {
-      const addr = XLSX.utils.encode_cell({r, c});
-      ws[addr] = {...cellObj};
-      if(style) ws[addr].s = style;
+    const fFill  = hex => ({ type:"pattern", pattern:"solid", fgColor:{argb:argb(hex)} });
+    const fFont  = (opts={}) => ({ name:"Arial", size:10, bold:false, color:{argb:argb(opts.color||"000000")}, ...opts });
+    const fAlign = (h="left",v="middle",wrap=false) => ({ horizontal:h, vertical:v, wrapText:wrap });
+    const fBorderSide = (style="thin",color="D1D5DB") => ({ style, color:{argb:argb(color)} });
+    const fBorder = (color="D1D5DB",style="thin") => {
+      const s = fBorderSide(style,color);
+      return { top:s, left:s, bottom:s, right:s };
+    };
+    const fBorderBot = (color="6B7280",style="medium") => ({ bottom:fBorderSide(style,color) });
+
+    const statusStyle = {
+      Completed: { fill:fFill(C.greenBg),  font:fFont({bold:true,color:C.greenFg,size:9}) },
+      Active:    { fill:fFill(C.greenBg),  font:fFont({bold:true,color:C.greenFg,size:9}) },
+      Pending:   { fill:fFill(C.yellowBg), font:fFont({bold:true,color:C.yellowFg,size:9}) },
+      Cancelled: { fill:fFill(C.redBg),    font:fFont({bold:true,color:C.redFg,size:9}) },
     };
 
-    // ── ROW 0: Title ──
-    setCell(R, 0, cell(title), titleStyle);
-    merge.push({s:{r:R,c:0}, e:{r:R,c:COLS-1}});
-    R++;
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "StackSuite"; wb.created = new Date();
+    const ws = wb.addWorksheet(isSO?"Sales Orders":"Invoices", {
+      properties:{ tabColor:{argb:argb(C.darkBlue)} }
+    });
 
-    // ── ROW 1-3: Meta ──
-    setCell(R, 0, cell("Period:"), metaStyle);
-    setCell(R, 1, cell(dateFrom+" to "+dateTo), metaStyle);
-    merge.push({s:{r:R,c:1}, e:{r:R,c:COLS-1}});
-    R++;
-    setCell(R, 0, cell("Generated:"), metaStyle);
-    setCell(R, 1, cell(new Date(data.generatedAt).toLocaleString("en-MY")), metaStyle);
-    merge.push({s:{r:R,c:1}, e:{r:R,c:COLS-1}});
-    R++;
-    setCell(R, 0, cell("Generated By:"), metaStyle);
-    setCell(R, 1, cell(user.fullName), metaStyle);
-    merge.push({s:{r:R,c:1}, e:{r:R,c:COLS-1}});
-    R++;
-    R++; // blank
+    // column widths
+    ws.columns = [
+      {width:14},{width:13},{width:16},{width:46},
+      {width:17},{width:13},{width:30},
+      {width:18},{width:18},{width:18},{width:18}, // extra for KPI cols
+    ];
 
-    // ── KPI SECTION HEADER ──
-    setCell(R, 0, cell("KPI SUMMARY"), sectionStyle);
-    merge.push({s:{r:R,c:0}, e:{r:R,c:COLS-1}});
-    R++;
+    const applyToRange = (startCol, endCol, rowNum, style) => {
+      for(let c=startCol; c<=endCol; c++){
+        const cell = ws.getCell(rowNum, c);
+        if(style.fill)   cell.fill   = style.fill;
+        if(style.font)   cell.font   = style.font;
+        if(style.border) cell.border = style.border;
+        if(style.alignment) cell.alignment = style.alignment;
+      }
+    };
 
-    // ── KPI Headers + Values ──
+    let R = 1; // ExcelJS is 1-indexed
+
+    // ── ROW 1: Title ──
+    ws.mergeCells(R,1,R,7);
+    const titleCell = ws.getCell(R,1);
+    titleCell.value     = title;
+    titleCell.font      = fFont({bold:true, size:16, color:C.darkBlue});
+    titleCell.fill      = fFill("F0F7FF");
+    titleCell.alignment = fAlign("left","middle");
+    ws.getRow(R).height = 30; R++;
+
+    // ── ROWS 2-4: Meta ──
+    const metaRows = [
+      ["Period:", dateFrom+" to "+dateTo],
+      ["Generated:", new Date(data.generatedAt).toLocaleString("en-MY")],
+      ["Generated By:", user.fullName],
+    ];
+    metaRows.forEach(([lbl, val]) => {
+      ws.mergeCells(R,2,R,7);
+      const la = ws.getCell(R,1); la.value=lbl; la.font=fFont({bold:true,color:"6B7280"}); la.alignment=fAlign();
+      const va = ws.getCell(R,2); va.value=val; va.font=fFont({color:C.darkGrey}); va.alignment=fAlign();
+      ws.getRow(R).height=16; R++;
+    });
+
+    // ── ROW blank ──
+    ws.getRow(R).height=8; R++;
+
+    // ── KPI section header ──
     const kpiCols = isSO
       ? ["Total","Completed","Pending","Cancelled","Total Value (RM)","Completed Value (RM)","Pending Value (RM)","Cancelled Value (RM)","Completion %","Cancellation %"]
       : ["Total","Active","Cancelled","Total Value (RM)","Active Value (RM)","Cancelled Value (RM)","Active %","Cancellation %"];
+    const kpiEnd = kpiCols.length;
+
+    ws.mergeCells(R,1,R,kpiEnd);
+    const kpiSecCell = ws.getCell(R,1);
+    kpiSecCell.value=  "KPI SUMMARY";
+    kpiSecCell.font=   fFont({bold:true,size:11,color:C.white});
+    kpiSecCell.fill=   fFill(C.darkBlue);
+    kpiSecCell.alignment=fAlign("left","middle");
+    ws.getRow(R).height=22; R++;
+
+    // ── KPI col headers ──
+    kpiCols.forEach((h,i) => {
+      const cell = ws.getCell(R, i+1);
+      cell.value=h; cell.font=fFont({bold:true,size:9,color:C.white}); cell.fill=fFill(C.midBlue);
+      cell.alignment=fAlign("center","middle",true);
+      cell.border=fBorderBot(C.lightBlue,"medium");
+    });
+    ws.getRow(R).height=30; R++;
+
+    // ── KPI values ──
     const kpiVals = isSO
       ? [kpi.totalCount, kpi.completedCount, kpi.pendingCount, kpi.cancelledCount,
          fn(kpi.totalValue), fn(kpi.completedValue), fn(kpi.pendingValue), fn(kpi.cancelledValue),
@@ -473,73 +508,84 @@ function ReportPage({ user, addToast }){
          fn(kpi.totalValue), fn(kpi.activeValue), fn(kpi.cancelledValue),
          kpi.activeRate+"%", kpi.cancellationRate+"%"];
 
-    kpiCols.forEach((h, i) => setCell(R, i, cell(h), kpiHdrStyle));
-    R++;
-    kpiVals.forEach((v, i) => setCell(R, i, cell(String(v)), kpiValStyle));
-    R++;
-    R++; // blank
+    kpiVals.forEach((v,i) => {
+      const cell = ws.getCell(R, i+1);
+      const isAmt = isSO ? i>=4&&i<=7 : i>=3&&i<=5;
+      cell.value    = isAmt ? fn(v) : v;
+      if(isAmt) cell.numFmt = '#,##0.00';
+      cell.font      = fFont({bold:true,size:11,color:C.darkBlue});
+      cell.fill      = fFill(C.xlightBlue);
+      cell.alignment = fAlign("center","middle");
+      cell.border    = fBorderBot(C.lightBlue,"medium");
+    });
+    ws.getRow(R).height=24; R++;
 
-    // ── DATA SECTION HEADER ──
-    setCell(R, 0, cell(isSO ? "SALES ORDERS" : "INVOICES"), sectionStyle);
-    merge.push({s:{r:R,c:0}, e:{r:R,c:COLS-1}});
-    R++;
+    // ── blank ──
+    ws.getRow(R).height=8; R++;
 
-    // ── Column Headers ──
-    const hdrs = isSO
-      ? ["SO No.", "Date", "Customer Code", "Customer Name", "Sub Total (RM)", "Status", "Remarks"]
-      : ["Invoice No.", "Date", "Customer Code", "Customer Name", "Sub Total (RM)", "Status", "Remarks"];
-    hdrs.forEach((h, i) => setCell(R, i, cell(h), i===4 ? colHdrRStyle : colHdrStyle));
-    const dataStartRow = R;
-    R++;
+    // ── Data section header ──
+    ws.mergeCells(R,1,R,7);
+    const datSecCell = ws.getCell(R,1);
+    datSecCell.value=isSO?"SALES ORDERS":"INVOICES";
+    datSecCell.font=fFont({bold:true,size:11,color:C.white});
+    datSecCell.fill=fFill(C.darkGrey);
+    datSecCell.alignment=fAlign("left","middle");
+    ws.getRow(R).height=22; R++;
 
-    // ── Data Rows ──
-    list.forEach((r, idx) => {
-      const st    = r[stKey]??0;
-      const lbl   = labels[st]||(isSO?"Pending":"Active");
-      const rem   = (r.CancellationRemarks&&r.CancellationRemarks!=="NA") ? r.CancellationRemarks : "";
-      const base  = idx%2===0 ? rowEvenStyle : rowOddStyle;
+    // ── Column headers ──
+    const colHdrs  = isSO
+      ? ["SO No.","Date","Customer Code","Customer Name","Sub Total (RM)","Status","Remarks"]
+      : ["Invoice No.","Date","Customer Code","Customer Name","Sub Total (RM)","Status","Remarks"];
+    const colAligns = ["center","center","center","left","right","center","left"];
+    colHdrs.forEach((h,i) => {
+      const cell = ws.getCell(R, i+1);
+      cell.value=h; cell.font=fFont({bold:true,size:10,color:C.white}); cell.fill=fFill(C.midGrey);
+      cell.alignment=fAlign(colAligns[i],"middle");
+      cell.border={ bottom:fBorderSide("medium","6B7280"), top:fBorderSide("thin","6B7280") };
+    });
+    ws.getRow(R).height=20;
+    const freezeRow = R+1; R++;
 
-      setCell(R, 0, {v:r[idKey], t:"s"}, {...base, ...monoStyle, font:{name:"Courier New",sz:10,bold:true,color:{rgb:"1D4ED8"}}});
-      setCell(R, 1, {v:r[dateKey], t:"s"}, {...base, font:{sz:10}, alignment:{horizontal:"center"}});
-      setCell(R, 2, {v:r.CustomerCode||"", t:"s"}, {...base, font:{sz:10}, alignment:{horizontal:"center"}});
-      setCell(R, 3, {v:r.CustomerName||"", t:"s"}, {...base, font:{sz:10}});
-      setCell(R, 4, numCell(r.SubTotal), {...base, font:{sz:10}, alignment:{horizontal:"right"}, z:numFmt});
-      setCell(R, 5, {v:lbl, t:"s"}, statusStyles[lbl]||base);
-      setCell(R, 6, {v:rem, t:"s"}, {...base, font:{sz:10,color:{rgb:"6B7280"}}});
-      R++;
+    // ── Data rows ──
+    list.forEach((r,idx) => {
+      const st  = r[stKey]??0;
+      const lbl = labels[st]||(isSO?"Pending":"Active");
+      const rem = (r.CancellationRemarks&&r.CancellationRemarks!=="NA") ? r.CancellationRemarks : "";
+      const bg  = idx%2===0 ? "F9FAFB" : "FFFFFF";
+      const bd  = fBorder();
+
+      const c1=ws.getCell(R,1); c1.value=r[idKey]; c1.font=fFont({bold:true,size:10,color:C.darkBlue,name:"Courier New"}); c1.fill=fFill(bg); c1.alignment=fAlign("center"); c1.border=bd;
+      const c2=ws.getCell(R,2); c2.value=r[dateKey]||""; c2.font=fFont({size:10}); c2.fill=fFill(bg); c2.alignment=fAlign("center"); c2.border=bd;
+      const c3=ws.getCell(R,3); c3.value=r.CustomerCode||""; c3.font=fFont({size:10,color:"374151"}); c3.fill=fFill(bg); c3.alignment=fAlign("center"); c3.border=bd;
+      const c4=ws.getCell(R,4); c4.value=r.CustomerName||""; c4.font=fFont({size:10}); c4.fill=fFill(bg); c4.alignment=fAlign("left","middle",true); c4.border=bd;
+      const c5=ws.getCell(R,5); c5.value=fn(r.SubTotal); c5.numFmt='#,##0.00'; c5.font=fFont({size:10}); c5.fill=fFill(bg); c5.alignment=fAlign("right"); c5.border=bd;
+      const sSt=statusStyle[lbl]||{fill:fFill(bg),font:fFont({size:9})};
+      const c6=ws.getCell(R,6); c6.value=lbl; c6.font=sSt.font; c6.fill=sSt.fill; c6.alignment=fAlign("center"); c6.border=bd;
+      const c7=ws.getCell(R,7); c7.value=rem; c7.font=fFont({size:9,color:"6B7280"}); c7.fill=fFill(bg); c7.alignment=fAlign("left"); c7.border=bd;
+      ws.getRow(R).height=18; R++;
     });
 
-    // ── Grand Total Row ──
+    // ── Grand total row ──
     const grandTotal = list.reduce((s,r)=>s+(+r.SubTotal||0),0);
-    merge.push({s:{r:R,c:0}, e:{r:R,c:3}});
-    setCell(R, 0, cell("GRAND TOTAL  ("+list.length+" records)"), totalLblStyle);
-    setCell(R, 4, numCell(grandTotal), {...totalStyle, alignment:{horizontal:"right"}, z:numFmt});
-    setCell(R, 5, cell(""), {fill:{fgColor:{rgb:"1D4ED8"}}});
-    setCell(R, 6, cell(""), {fill:{fgColor:{rgb:"1D4ED8"}}});
-    R++;
+    ws.mergeCells(R,1,R,4);
+    const wb2 = Side => ({ style:Side, color:{argb:"FFFFFFFF"} });
+    const totBorder = { top:fBorderSide("medium","FFFFFF"), bottom:fBorderSide("medium","FFFFFF") };
+    const gt1=ws.getCell(R,1); gt1.value=`GRAND TOTAL  (${list.length} records)`; gt1.font=fFont({bold:true,size:11,color:C.white}); gt1.fill=fFill(C.totalBg); gt1.alignment=fAlign("left","middle"); gt1.border=totBorder;
+    const gt5=ws.getCell(R,5); gt5.value=grandTotal; gt5.numFmt='#,##0.00'; gt5.font=fFont({bold:true,size:11,color:C.white}); gt5.fill=fFill(C.totalBg); gt5.alignment=fAlign("right","middle"); gt5.border=totBorder;
+    [6,7].forEach(c=>{ const cell=ws.getCell(R,c); cell.fill=fFill(C.totalBg); cell.border=totBorder; });
+    ws.getRow(R).height=22;
 
-    // ── Set sheet range ──
-    ws["!ref"] = XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:R-1,c:Math.max(COLS-1, kpiCols.length-1)}});
-    ws["!merges"] = merge;
+    // ── Freeze panes ──
+    ws.views = [{ state:"frozen", xSplit:0, ySplit:freezeRow-1, activeCell:`A${freezeRow}` }];
 
-    // ── Column widths ──
-    ws["!cols"] = [
-      {wch:14}, // SO No.
-      {wch:12}, // Date
-      {wch:14}, // Cust Code
-      {wch:44}, // Cust Name
-      {wch:16}, // Sub Total
-      {wch:12}, // Status
-      {wch:30}, // Remarks
-    ];
-
-    // ── Freeze top rows (title+meta+blank+kpi section+kpi hdr+kpi val+blank+data hdr+col hdr = dataStartRow+1) ──
-    ws["!freeze"] = {xSplit:0, ySplit:dataStartRow+1};
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, isSO?"Sales Orders":"Invoices");
-    XLSX.writeFile(wb, "StackSuite_"+(isSO?"SO":"Invoice")+"_Report_"+dateFrom+"_to_"+dateTo+".xlsx");
-    addToast("success","✅ Exported",(isSO?"SO":"Invoice")+" report downloaded as .xlsx");
+    // ── Download ──
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href=url; a.download=`StackSuite_${isSO?"SO":"Invoice"}_Report_${dateFrom}_to_${dateTo}.xlsx`;
+    a.click(); URL.revokeObjectURL(url);
+    addToast("success","✅ Exported",`${isSO?"SO":"Invoice"} report downloaded as .xlsx`);
   }
 
   // ── RENDER ─────────────────────────────────────────────────────────────
@@ -584,7 +630,7 @@ function ReportPage({ user, addToast }){
               style={{...btnPrimary,padding:"8px 18px",background:"linear-gradient(135deg,#22c55e,#16a34a)",boxShadow:"0 4px 14px rgba(34,197,94,.25)"}}>
               🖨️ Print / PDF
             </button>
-            <button onClick={exportExcel}
+            <button onClick={()=>exportExcel().catch(e=>addToast("error","❌ Export Failed",e.message))}
               style={{...btnPrimary,padding:"8px 18px",background:"linear-gradient(135deg,#f59e0b,#d97706)",boxShadow:"0 4px 14px rgba(245,158,11,.25)"}}>
               📥 Export Excel
             </button>
