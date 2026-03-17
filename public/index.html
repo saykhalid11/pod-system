@@ -46,6 +46,22 @@ button:focus{outline:none}
 const { useState, useMemo, useEffect, useCallback } = React;
 const API = "";
 
+class ErrorBoundary extends React.Component {
+  constructor(props){ super(props); this.state={error:null}; }
+  static getDerivedStateFromError(e){ return {error:e}; }
+  render(){
+    if(this.state.error) return (
+      <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0d0f14",padding:32}}>
+        <div style={{background:"#1a1e28",border:"1px solid rgba(239,68,68,.4)",borderRadius:14,padding:32,maxWidth:600,width:"100%"}}>
+          <div style={{fontSize:20,fontWeight:800,color:"#ef4444",marginBottom:12}}>⚠️ App Error</div>
+          <pre style={{fontFamily:"monospace",fontSize:12,color:"#e8ecf4",whiteSpace:"pre-wrap",wordBreak:"break-all"}}>{this.state.error.toString()}{"\n\n"}{this.state.error.stack}</pre>
+        </div>
+      </div>
+    );
+    return this.props.children;
+  }
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────
 const fmtDate = d => d ? d.toISOString ? d.toISOString().split("T")[0] : d : "";
 const today   = fmtDate(new Date());
@@ -237,199 +253,6 @@ function LoginPage({ onLogin, darkMode, toggleDark }){
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// USER MANAGEMENT
-// ══════════════════════════════════════════════════════════════════════════
-  const isSO  = docType==="SO";
-  const [dateFrom,   setDateFrom]  = useState(fom);
-  const [dateTo,     setDateTo]    = useState(today);
-  const [custFilter, setCustFilter]= useState("");
-  const [docs,       setDocs]      = useState([]);
-  const [loading,    setLoading]   = useState(false);
-  const [loaded,     setLoaded]    = useState(false);
-  const [error,      setError]     = useState("");
-  const [expanded,   setExpanded]  = useState({});
-  const [selected,   setSelected]  = useState({});
-  const [bulkLoading,setBulkLoading]=useState(false);
-  const statusMap = isSO ? SO_STATUS : IV_STATUS;
-
-  async function loadDocs(){
-    if(!dateFrom||!dateTo){ addToast("warn","⚠️ Required","Select both dates."); return; }
-    if(dateFrom>dateTo){ addToast("warn","⚠️ Invalid","From must be before To."); return; }
-    setLoading(true); setLoaded(false); setError(""); setExpanded({}); setSelected({}); setDocs([]);
-    try{
-      const url = isSO ? `/api/sales-orders?from=${dateFrom}&to=${dateTo}&customer=${encodeURIComponent(custFilter)}`
-                       : `/api/invoices?from=${dateFrom}&to=${dateTo}&customer=${encodeURIComponent(custFilter)}`;
-      const data = await apiFetch(url);
-      setDocs(data); setLoaded(true);
-      addToast("success","✅ Loaded",`${data.length} ${isSO?"order":"invoice"}(s) retrieved.`);
-    }catch(err){ setError(err.message); addToast("error","❌ Failed",err.message); }
-    finally{ setLoading(false); }
-  }
-
-  function handleStatusUpdated(id, status, remarks){
-    setDocs(d=>d.map(x=>x.id===id ? {...x, [isSO?"doStatus":"invoiceStatus"]:status, cancellationRemarks:remarks} : x));
-    setExpanded(e=>({...e,[id]:false}));
-  }
-
-  const allIds     = docs.map(d=>d.id);
-  const allChecked = allIds.length>0 && allIds.every(id=>selected[id]);
-  const anyChecked = allIds.some(id=>selected[id]);
-  const selectedIds= allIds.filter(id=>selected[id]);
-
-  function toggleAll(){ const v=!allChecked; const s={}; allIds.forEach(id=>s[id]=v); setSelected(s); }
-  function toggleOne(id){ setSelected(s=>({...s,[id]:!s[id]})); }
-
-  async function bulkComplete(){
-    if(!selectedIds.length){ addToast("warn","⚠️","Select at least one order."); return; }
-    if(!window.confirm(`Mark ${selectedIds.length} order(s) as Completed?`)) return;
-    setBulkLoading(true);
-    try{
-      const res = await apiFetch("/api/sales-orders/bulk-complete",{ method:"POST", body:JSON.stringify({salesOrderNos:selectedIds}) });
-      res.success.forEach(id=>{ setDocs(d=>d.map(x=>x.id===id?{...x,doStatus:1}:x)); });
-      addToast("success","✅ Bulk Complete",`${res.success.length} completed, ${res.failed.length} failed.`);
-      setSelected({});
-    }catch(err){ addToast("error","❌ Failed",err.message); }
-    finally{ setBulkLoading(false); }
-  }
-
-  const stats = useMemo(()=>{
-    const s={total:docs.length,pending:0,completed:0,cancelled:0};
-    docs.forEach(d=>{
-      const v = isSO ? (d.doStatus??0) : (d.invoiceStatus??0);
-      if(v===0)      s.pending++;
-      else if(v===1) s.completed++;
-      else if(v===2) s.cancelled++;
-    });
-    return s;
-  },[docs]);
-
-  const colsGrid = isSO
-    ? "28px 30px 150px 100px 1fr 120px 70px 160px"
-    : "28px 150px 100px 1fr 120px 70px 160px";
-
-  const headers = isSO
-    ? ["","","ORDER NO.","DATE","CUSTOMER","GROSS (RM)","ITEMS","STATUS"]
-    : ["","INV NO.","DATE","CUSTOMER","GROSS (RM)","ITEMS","STATUS"];
-
-  return (
-    <div style={{display:"flex",flexDirection:"column",gap:16}}>
-      {/* Filter */}
-      <div className="card" style={{padding:"16px 20px",display:"flex",alignItems:"flex-end",gap:14,flexWrap:"wrap"}}>
-        {[["From",dateFrom,setDateFrom],["To",dateTo,setDateTo]].map(([lbl,val,set])=>(
-          <div key={lbl} style={{display:"flex",flexDirection:"column",gap:5}}>
-            <span style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase"}}>{lbl} Date</span>
-            <input type="date" value={val} onChange={e=>set(e.target.value)} style={{...inp,minWidth:145,width:"auto",cursor:"pointer"}}/>
-          </div>
-        ))}
-        <div style={{display:"flex",flexDirection:"column",gap:5}}>
-          <span style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:1,textTransform:"uppercase"}}>Customer</span>
-          <input value={custFilter} onChange={e=>setCustFilter(e.target.value)} placeholder="Filter by customer…"
-            onKeyDown={e=>e.key==="Enter"&&loadDocs()} style={{...inp,minWidth:190,width:"auto"}}/>
-        </div>
-        <div style={{display:"flex",gap:9,marginLeft:"auto",alignItems:"center"}}>
-          {isSO&&anyChecked&&user.canSubmit&&(
-            <button onClick={bulkComplete} disabled={bulkLoading}
-              style={{...btnPrimary,background:"linear-gradient(135deg,#22c55e,#16a34a)",padding:"8px 16px",opacity:bulkLoading?.7:1}}>
-              {bulkLoading?"⌛ Processing…":`✅ Complete (${selectedIds.length})`}
-            </button>
-          )}
-          <button onClick={()=>{setDateFrom(fom);setDateTo(today);setCustFilter("");}}
-            style={{padding:"8px 14px",borderRadius:8,background:"var(--surface2)",border:"1px solid var(--border2)",color:"var(--text2)",fontWeight:600,fontSize:13,cursor:"pointer"}}>↺</button>
-          <button onClick={loadDocs} disabled={loading} style={{...btnPrimary,padding:"8px 20px",opacity:loading?.7:1}}>
-            {loading?"⌛ Loading…":"⚡ Load"}
-          </button>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
-        {[
-          ["total","📋","var(--accent)","TOTAL"],
-          ["pending","⏳","var(--orange)",isSO?"PENDING":"ACTIVE"],
-          ["completed","✅","var(--green)","COMPLETED"],
-          ["cancelled","❌","var(--red)","CANCELLED"],
-        ].map(([k,ico,clr,lbl])=>(
-          <div key={k} className="card" style={{padding:"13px 16px",display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:34,height:34,borderRadius:8,background:`${clr.replace("var(","").replace(")","")}_bg`,display:"grid",placeItems:"center",fontSize:16,flexShrink:0,background:`${clr}22`}}>{ico}</div>
-            <div>
-              <div style={{fontSize:22,fontWeight:800,letterSpacing:-1,color:k==="total"?"var(--text)":clr}}>{loaded?stats[k]:"—"}</div>
-              <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)",marginTop:1}}>{lbl}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Table */}
-      <div className="card" style={{overflow:"hidden"}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 18px",borderBottom:"1px solid var(--border)"}}>
-          <div style={{fontFamily:"monospace",fontSize:12,color:"var(--text2)"}}>
-            {error?<span style={{color:"var(--red)"}}>⚠️ {error}</span>
-              :loaded?<span>Found <strong style={{color:"var(--accent)"}}>{docs.length}</strong> · {dateFrom} → {dateTo}</span>
-              :`Select date range and click ⚡ Load`}
-          </div>
-          <div style={{fontFamily:"monospace",fontSize:10,color:"var(--text3)"}}>↕ Click row to expand</div>
-        </div>
-
-        <div style={{display:"grid",gridTemplateColumns:colsGrid,padding:"8px 18px",background:"var(--surface2)",borderBottom:"1px solid var(--border)"}}>
-          {headers.map((h,i)=>(
-            <div key={i} style={{padding:"0 7px",fontFamily:"monospace",fontSize:10,color:"var(--text3)",letterSpacing:.8,textTransform:"uppercase",textAlign:i>=(isSO?4:3)?"center":"left"}}>
-              {i===1&&isSO
-                ? <input type="checkbox" checked={allChecked} onChange={toggleAll} style={{width:14,height:14,accentColor:"var(--accent)",cursor:"pointer"}}/>
-                : h}
-            </div>
-          ))}
-        </div>
-
-        {loading?(
-          <div style={{padding:50,textAlign:"center",fontFamily:"monospace",fontSize:13,color:"var(--text3)"}}>
-            <span style={{display:"inline-block",width:16,height:16,border:"2px solid var(--border)",borderTopColor:"var(--accent)",borderRadius:"50%",animation:"spin .7s linear infinite",marginRight:8,verticalAlign:"middle"}}/>
-            Querying SQL Server…
-          </div>
-        ):!loaded&&!error?(
-          <div style={{padding:50,textAlign:"center"}}>
-            <div style={{fontSize:32,opacity:.2}}>🗂️</div>
-            <div style={{fontFamily:"monospace",fontSize:12,color:"var(--text3)",marginTop:8}}>No data loaded yet.</div>
-          </div>
-        ):error?(
-          <div style={{padding:40,textAlign:"center"}}>
-            <div style={{fontSize:30,opacity:.3}}>⚠️</div>
-            <div style={{fontFamily:"monospace",fontSize:13,color:"var(--red)",marginTop:8}}>{error}</div>
-          </div>
-        ):docs.length===0?(
-          <div style={{padding:50,textAlign:"center"}}>
-            <div style={{fontSize:32,opacity:.2}}>🔍</div>
-            <div style={{fontFamily:"monospace",fontSize:12,color:"var(--text3)",marginTop:8}}>No records found.</div>
-          </div>
-        ):docs.map(doc=>{
-          const gross    = doc.items.reduce((s,it)=>s+(+it.gross||0),0);
-          const open     = !!expanded[doc.id];
-          const statusV  = isSO ? (doc.doStatus??0) : (doc.invoiceStatus??0);
-          const isSel    = !!selected[doc.id];
-          return (
-            <div key={doc.id} style={{borderBottom:"1px solid var(--border)"}}>
-              <div style={{display:"grid",gridTemplateColumns:colsGrid,padding:"0 18px",minHeight:50,alignItems:"center",cursor:"pointer",background:open?"rgba(79,142,247,.04)":isSel?"rgba(79,142,247,.02)":"transparent",transition:"background .12s"}}>
-                <div style={{padding:"0 7px"}} onClick={e=>e.stopPropagation()}>
-                  <div style={{width:18,height:18,borderRadius:5,background:open?"rgba(79,142,247,.12)":"var(--surface2)",border:`1px solid ${open?"var(--accent)":"var(--border)"}`,display:"grid",placeItems:"center",fontSize:11,color:open?"var(--accent)":"var(--text3)",transform:open?"rotate(90deg)":"none",transition:"all .2s",cursor:"pointer"}} onClick={()=>setExpanded(e=>({...e,[doc.id]:!e[doc.id]}))}>›</div>
-                </div>
-                {isSO&&<div style={{padding:"0 7px"}} onClick={e=>e.stopPropagation()}>
-                  <input type="checkbox" checked={isSel} onChange={()=>toggleOne(doc.id)} style={{width:14,height:14,accentColor:"var(--accent)",cursor:"pointer"}}/>
-                </div>}
-                <div onClick={()=>setExpanded(e=>({...e,[doc.id]:!e[doc.id]}))} style={{padding:"0 7px",fontFamily:"monospace",fontSize:12,color:"var(--accent)",fontWeight:500}}>{doc.id}</div>
-                <div onClick={()=>setExpanded(e=>({...e,[doc.id]:!e[doc.id]}))} style={{padding:"0 7px",fontFamily:"monospace",fontSize:12,color:"var(--text2)"}}>{doc.date}</div>
-                <div onClick={()=>setExpanded(e=>({...e,[doc.id]:!e[doc.id]}))} style={{padding:"0 7px",fontSize:13,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{doc.customer}</div>
-                <div onClick={()=>setExpanded(e=>({...e,[doc.id]:!e[doc.id]}))} style={{padding:"0 7px",fontFamily:"monospace",fontSize:13,fontWeight:600,textAlign:"center"}}>RM {(doc.subTotal||0).toFixed(2)}</div>
-                <div onClick={()=>setExpanded(e=>({...e,[doc.id]:!e[doc.id]}))} style={{padding:"0 7px",fontFamily:"monospace",fontSize:12,color:"var(--text2)",textAlign:"center"}}>{doc.items.length}</div>
-                <div onClick={()=>setExpanded(e=>({...e,[doc.id]:!e[doc.id]}))} style={{padding:"0 7px",textAlign:"center"}}><StatusBadge statusMap={statusMap} value={statusV}/></div>
-              </div>
-              {open&&<OrderDetailPanel doc={doc} docType={docType} user={user} onStatusUpdated={handleStatusUpdated} addToast={addToast}/>}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 // ══════════════════════════════════════════════════════════════════════════
 // KPI PAGE
@@ -524,12 +347,12 @@ function ReportPage({ user, addToast }){
       "<style>@media print{#__pod_print__ .no-print{display:none!important}body>*:not(#__pod_print__){display:none!important}#__pod_print__{position:static!important;overflow:visible!important}@page{margin:8mm;size:A4 landscape}}</style>"
       + "<div class='no-print' style='position:sticky;top:0;background:#f0f3ff;border-bottom:1px solid #c8cfee;padding:10px 20px;display:flex;gap:10px;align-items:center;z-index:1'>"
       + "<button onclick='window.print()' style='background:linear-gradient(135deg,#4f8ef7,#7c5cfc);color:#fff;border:none;padding:9px 20px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer'>🖨️ Print / Save as PDF</button>"
-      + "<button onclick="document.getElementById('__pod_print__').remove()" style='background:#fff;color:#4f8ef7;border:1px solid #c8cfee;padding:9px 16px;border-radius:8px;font-size:13px;cursor:pointer'>✕ Close</button>"
+      + "<button onclick='document.getElementById(\"__pod_print__\").remove()' style='background:#fff;color:#4f8ef7;border:1px solid #c8cfee;padding:9px 16px;border-radius:8px;font-size:13px;cursor:pointer'>✕ Close</button>"
       + "<span style='font-size:11px;color:#888;margin-left:8px'>"+title+" · "+dateFrom+" to "+dateTo+"</span></div>"
       + "<div style='padding:24px 36px'>"
       + "<div style='display:flex;align-items:center;justify-content:space-between;padding-bottom:14px;border-bottom:3px solid #4f8ef7;margin-bottom:18px'>"
       + "<div style='display:flex;align-items:center;gap:12px'>"
-      + "<img src= + logo_b64 +  style='height:50px' alt='StackSuite'/>"
+      + "<img src='' style='height:50px;display:none' alt='StackSuite'/>"
       + "<div><div style='font-size:17px;font-weight:800'>StackSuite</div><div style='font-size:10px;color:#777'>StackSuite Technologies Sdn Bhd</div></div></div>"
       + "<div style='text-align:right'><div style='font-size:15px;font-weight:700;color:#4f8ef7'>"+title+"</div>"
       + "<div style='font-size:10px;color:#666;margin-top:3px'>Period: "+dateFrom+" to "+dateTo+"</div>"
@@ -1425,7 +1248,7 @@ function App(){
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+ReactDOM.createRoot(document.getElementById("root")).render(<ErrorBoundary><App/></ErrorBoundary>);
 </script>
 </body>
 </html>
