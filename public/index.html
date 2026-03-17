@@ -410,7 +410,10 @@ function ReportPage({ user, addToast }){
     const argb = hex => hex.length===6 ? "FF"+hex : hex;
 
     const fFill  = hex => ({ type:"pattern", pattern:"solid", fgColor:{argb:argb(hex)} });
-    const fFont  = (opts={}) => ({ name:"Arial", size:10, bold:false, color:{argb:argb(opts.color||"000000")}, ...opts });
+    const fFont  = (opts={}) => {
+      const {color, ...rest} = opts;
+      return { name:"Arial", size:10, bold:false, ...rest, color:{argb:argb(color||"000000")} };
+    };
     const fAlign = (h="left",v="middle",wrap=false) => ({ horizontal:h, vertical:v, wrapText:wrap });
     const fBorderSide = (style="thin",color="D1D5DB") => ({ style, color:{argb:argb(color)} });
     const fBorder = (color="D1D5DB",style="thin") => {
